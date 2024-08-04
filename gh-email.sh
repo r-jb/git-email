@@ -171,7 +171,7 @@ target_to_repo_list() {
 			SCAN_NAME="${target}"
 			REPO_LIST="${REPO_URI}"
 		else
-			echo_error "repository empty"
+			echo_error 'repository empty or non-existent'
 		fi
 
 	# Otherwise
