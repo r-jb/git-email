@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 # Default values
+GH_HOST_TIMEOUT=10
 USE_FILTERS='true'
 INCLUDE_NAME='true'
 INCLUDE_FORK='false'
@@ -122,7 +123,7 @@ check_requirements() {
 	if ! command -v git >/dev/null 2>/dev/null; then
 		echo_error 'Requirements: git not found'
 	elif command -v gh >/dev/null 2>/dev/null; then
-		if gh auth status >/dev/null 2>/dev/null; then
+		if timeout "${GH_HOST_TIMEOUT}" gh auth status >/dev/null 2>/dev/null; then
 			USE_GH_CLI='true'
 		else
 			echo_info 'GH CLI not authenticated, API rate limit may apply'
@@ -264,10 +265,10 @@ is_path() {
 # Usage: gh_owner_exist <url>
 gh_owner_exist() {
 	if [ "$USE_GH_CLI" = 'true' ]; then
-		gh api "users/$1" --silent >/dev/null 2>&1
+		timeout "${GH_HOST_TIMEOUT}" gh api "users/$1" --silent >/dev/null 2>&1
 		return $?
 	else
-		http_code="$(curl --silent --max-time 30 --fail --head --output /dev/null --write-out "%{http_code}\n" "https://api.github.com/users/$1")"
+		http_code="$(curl --silent --max-time "${GH_HOST_TIMEOUT}" --fail --head --output /dev/null --write-out "%{http_code}\n" "https://api.${GH_HOST}/users/$1")"
 		[ "$http_code" = '200' ]
 	fi
 }
@@ -278,9 +279,9 @@ gh_owner_has_repo() {
 	public_repos=0
 
 	if [ "$USE_GH_CLI" = 'true' ]; then
-		public_repos="$(gh api "users/$1" --jq '.public_repos' 2>/dev/null)"
+		public_repos="$(timeout "${GH_HOST_TIMEOUT}" gh api "users/$1" --jq '.public_repos' 2>/dev/null)"
 	else
-		public_repos="$(curl --silent --max-time 30 "https://api.github.com/users/$1" | awk --field-separator ':' '/public_repos/ {gsub(/[^0-9]/,"", $2); print $2}')"
+		public_repos="$(curl --silent --max-time "${GH_HOST_TIMEOUT}" "https://api.${GH_HOST}/users/$1" | awk --field-separator ':' '/public_repos/ {gsub(/[^0-9]/,"", $2); print $2}')"
 	fi
 	[ "$public_repos" -gt 0 ]
 }
@@ -290,9 +291,9 @@ is_gh_fork() {
 	local is_fork
 
 	if [ "$USE_GH_CLI" = 'true' ]; then
-		is_fork="$(gh repo view "$1" --json isFork --jq '.isFork' 2>/dev/null)"
+		is_fork="$(timeout "${GH_HOST_TIMEOUT}" gh repo view "$1" --json isFork --jq '.isFork' 2>/dev/null)"
 	else
-		is_fork="$(curl --silent --max-time 30 "https://api.github.com/repos/$1" | awk --field-separator ':' '/"fork"/ {gsub(/[^a-zA-Z]/,"", $2); print $2; exit}')"
+		is_fork="$(curl --silent --max-time "${GH_HOST_TIMEOUT}" "https://api.${GH_HOST}/repos/$1" | awk --field-separator ':' '/"fork"/ {gsub(/[^a-zA-Z]/,"", $2); print $2; exit}')"
 	fi
 	[ "$is_fork" = 'true' ]
 }
@@ -445,9 +446,9 @@ get_gh_owner_repo_list() {
 	owner="$1"
 
 	if [ "${USE_GH_CLI}" = 'true' ]; then
-		owner_type="$(gh api "users/${owner}" --cache 5m --jq '.type' 2>/dev/null)"
+		owner_type="$(timeout "${GH_HOST_TIMEOUT}" gh api "users/${owner}" --jq '.type' 2>/dev/null)"
 	else
-		owner_type="$(curl --silent --max-time 30 "https://api.github.com/users/${owner}" | awk --field-separator ':' '/"type"/ {gsub(/[^a-zA-Z]/,"", $2); print $2}')"
+		owner_type="$(curl --silent --max-time "${GH_HOST_TIMEOUT}" "https://api.${GH_HOST}/users/${owner}" | awk --field-separator ':' '/"type"/ {gsub(/[^a-zA-Z]/,"", $2); print $2}')"
 	fi
 
 	if [ "${owner_type}" = 'Organization' ]; then
@@ -459,9 +460,9 @@ get_gh_owner_repo_list() {
 	fi
 
 	if [ "${USE_GH_CLI}" = 'true' ]; then
-		repo_list="$(gh api "${owner_api_type}/${owner}/repos" --paginate --cache 5m --jq ".[] | select(.fork == ${INCLUDE_FORK}) | select(.private == ${INCLUDE_PRIVATE}) | .clone_url")"
+		repo_list="$(timeout "${GH_HOST_TIMEOUT}" gh api "${owner_api_type}/${owner}/repos" --paginate --jq ".[] | select(.fork == ${INCLUDE_FORK}) | select(.private == ${INCLUDE_PRIVATE}) | .clone_url")"
 	else
-		response=$(curl --silent --max-time 30 "https://api.github.com/${owner_api_type}/${owner}/repos")
+		response=$(curl --silent --max-time "${GH_HOST_TIMEOUT}" "https://api.${GH_HOST}/${owner_api_type}/${owner}/repos")
 		repo_list=$(awk --assign include_fork="${INCLUDE_FORK}" '
 		BEGIN { RS = ""; FS = "\n"; }
 		{
