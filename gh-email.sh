@@ -1,163 +1,222 @@
 #!/usr/bin/env bash
 
 # Default values
-USE_FILTERS=true
-INCLUDE_NAME=true
-INCLUDE_FORK=true
-INCLUDE_PRIVATE=true
-UPDATE=false
-KEEP_DOWNLOADS=false
+USE_FILTERS='true'
+INCLUDE_NAME='true'
+INCLUDE_FORK='false'
+INCLUDE_PRIVATE='true'
+UPDATE='false'
+KEEP_DOWNLOADS='false'
+GH_HOST="${GH_HOST:-github.com}"
+GH_TOKEN="${GH_TOKEN:-${GH_ENTERPRISE_TOKEN:-}}"
 
 GREEN='\033[0;32m'
+RED='\033[0;31m'
+BLUE='\033[0;34m'
 YELLOW='\033[0;33m'
 BOLD_WHITE='\033[1;37m'
 NO_COLOR='\033[0m'
 
-set -o errexit   # abort on nonzero exitstatus
-set -o nounset   # abort on unbound variable
-set -o pipefail  # don't hide errors within pipes
+set -o errexit  # abort on nonzero exitstatus
+set -o nounset  # abort on unbound variable
+set -o pipefail # don't hide errors within pipes
 
 usage() {
-	echo -e "\nUsage: $0 (option) [repo url|local repo|GitHub Org/User]"
+	echo -e "\nUsage: ${0} (option) [repo url|local repo|GitHub Org/User]"
 	echo -e '\t-h, --help\t\tPrint this help page'
 	echo -e '\t-o, --output=FILE\tFile to save the output into'
 	echo -e '\t-i, --input=FILE\tFile to read the list of targets from'
-	echo -e '\t-f,--filter=FILE\tFilter out emails containing this filter'
+	echo -e '\t-f,--filter=FILTER\tFilter out emails containing this filter'
 	echo -e '\t-r, --raw\t\tNo filter no banner'
-	echo -e '\t--exclude-name\t\tExclude authors'\''s name'
-	echo -e '\t--exclude-fork\t\tExclude forked repos from the scan'
-	echo -e '\t--exclude-private\tExclude private repos from the scan'
+	echo -e '\t--fork\t\tInclude forked repos in the scan'
+	echo -e '\t--no-name\t\tExclude authors'\''s name'
+	echo -e '\t--no-private\tExclude private repos in the scan'
 	echo -e '\t-k, --keep\t\tKeep downloaded .git(s) after the scan'
 	echo -e '\t-u, --update\t\tUpdate existing .git(s) before the scan'
 	echo -e '\t--no-color\t\tDo not use colors\n'
 }
 
-# Usage: error ERROR_MSG
-error() {
-	echo "Error: $*"
+echo_info() {
+	echo -e "[${BLUE}i${NO_COLOR}] - ${BLUE}${*}${NO_COLOR}"
+}
+
+echo_error() {
+	echo -e "[${RED}-${NO_COLOR}] - ${RED}Error: ${*}${NO_COLOR}"
 	usage
 	exit 1
 }
 
 parse_args() {
-	read -r SCAN_NAME USER_FILTERS OUTPUT_FILE INPUT_FILE TARGET <<< ''
-	while (( "$#" )); do
-		case "$1" in
-			--help|-h) usage; exit;;
-			--output=*) OUTPUT_FILE="${1#*=}";;
-			--output |-o ) OUTPUT_FILE=$2; shift;;
-			--input=*) INPUT_FILE="${1#*=}";;
-			--input |-i ) INPUT_FILE=$2; shift;;
-			--filter=*) USER_FILTERS+=" -e ${1#*=}";;
-			--filter |-f ) USER_FILTERS+=" -e ${2}"; shift;;
-			--raw |-r ) USE_FILTERS=false;;
-			--exclude-name ) INCLUDE_NAME=false;;
-			--exclude-fork ) INCLUDE_FORK=false;;
-			--exclude-private ) INCLUDE_PRIVATE=false;;
-			--keep |-k ) KEEP_DOWNLOADS=true;;
-			--update |-u ) UPDATE=true;;
-			--no-color ) read -r NO_COLOR GREEN YELLOW BOLD_WHITE <<< '';;
-			*)
-				TARGET="$1"
+	read -r SCAN_NAME USER_FILTERS OUTPUT_FILE INPUT_FILE TARGET <<<''
+	while (("$#")); do
+		case "${1}" in
+		--help | -h)
+			usage
+			exit
+			;;
+		--output=*) OUTPUT_FILE="${1#*=}" ;;
+		--output | -o)
+			OUTPUT_FILE="${2}"
+			shift
+			;;
+		--input=*) INPUT_FILE="${1#*=}" ;;
+		--input | -i)
+			INPUT_FILE="${2}"
+			shift
+			;;
+		--filter=*) USER_FILTERS+=" -e ${1#*=}" ;;
+		--filter | -f)
+			USER_FILTERS+=" -e ${2}"
+			shift
+			;;
+		--raw | -r) USE_FILTERS='false' ;;
+		--fork) INCLUDE_FORK='true' ;;
+		--no-name) INCLUDE_NAME='false' ;;
+		--no-private) INCLUDE_PRIVATE='false' ;;
+		--keep | -k) KEEP_DOWNLOADS='true' ;;
+		--update | -u) UPDATE='true' ;;
+		--no-color) read -r GREEN RED BLUE YELLOW BOLD_WHITE NO_COLOR <<<'' ;;
+		--*) echo_error "unknown argument: ${1}" ;;
+		*)
+			if [ -n "${TARGET}" ]; then
+				echo_error 'use input file to scan multiple targets'
+			else
+				TARGET="${1}"
+			fi
+			;;
 		esac
 		shift
 	done
 
-	if [ -n "$TARGET" ]; then
-		if [ -n "$INPUT_FILE" ]; then
-			local repo_list scan_name
-			parse_input_file "$INPUT_FILE"
+	check_requirements
+
+	if [ -n "${TARGET}" ]; then
+		if [ -n "${INPUT_FILE}" ]; then
+			parse_input_file "${INPUT_FILE}"
 
 			# If target is not in the input file
-			if ! grep --quiet --max-count 1 "$TARGET" <<< "$REPO_LIST"; then
-				repo_list="$REPO_LIST"
-				scan_name="$SCAN_NAME"
+			if ! grep --quiet --max-count 1 "${TARGET}" <<<"${REPO_LIST}"; then
+				local repo_list scan_name
+				repo_list="${REPO_LIST}"
+				scan_name="${SCAN_NAME}"
 
 				# Add target to the list
-				target_to_repo_list "$TARGET"
-				REPO_LIST+="$repo_list"
-				SCAN_NAME="$scan_name, $SCAN_NAME"
+				target_to_repo_list "${TARGET}"
+				REPO_LIST+="${repo_list}"
+				SCAN_NAME="${scan_name}, ${SCAN_NAME}"
 			fi
 		else
-			target_to_repo_list "$TARGET"
+			target_to_repo_list "${TARGET}"
 		fi
-	elif [ -n "$INPUT_FILE" ]; then
-		parse_input_file "$INPUT_FILE"
+	elif [ -n "${INPUT_FILE}" ]; then
+		parse_input_file "${INPUT_FILE}"
 	else
-		error 'no target provided'
+		usage
+		exit
+	fi
+}
+
+# Output: ${USE_GH_CLI}
+check_requirements() {
+	USE_GH_CLI='false'
+	if ! command -v git >/dev/null 2>/dev/null; then
+		echo_error 'Requirements: git not found'
+	elif command -v gh >/dev/null 2>/dev/null; then
+		if gh auth status >/dev/null 2>/dev/null; then
+			USE_GH_CLI='true'
+		else
+			echo_info 'GH CLI not authenticated, API rate limit may apply'
+		fi
+	fi
+
+	if ! command -v curl >/dev/null 2>/dev/null; then
+		echo_error 'Requirements: curl not found'
 	fi
 }
 
 # Usage: target_to_repo_list TARGET
-# Output: $REPO_LIST
+# Output: ${REPO_LIST}
 target_to_repo_list() {
 	local target
 	target="$1"
 
-	# Check if target is a local dir
-	if [ -d "$target" ]; then
-		SCAN_NAME="$(basename "$target")"
-		get_repo_list_local "$target"
+	uri_to_path "${target}"
+
+	# Check if target path is a local dir
+	if [ -d "${target}" ]; then
+		SCAN_NAME="$(basename "${target}")"
+		get_repo_list_local "${target}"
+
+	# Check if target URI is a local dir
+	elif is_path "${REPO_PATH}" && [ -d "${REPO_PATH}" ]; then
+		SCAN_NAME="${REPO_PATH}"
+		get_repo_list_local "${REPO_PATH}"
 
 	# Check if target is a remote git repo
-	elif repo_exist_not_empty "$target"; then
-		local _scan_name
-		_scan_name="${target#*.*/}"
-		SCAN_NAME="${_scan_name%.git}"
-		REPO_LIST="$target"
-
-	# Check if URI is a GitHub repo
-	elif [[ "$target" =~ ^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$ ]]; then
-		if repo_exist_not_empty "https://github.com/${target}"; then
-			SCAN_NAME="$target"
-			REPO_LIST="https://github.com/${target}"
+	elif repo_exist_not_empty "${target}"; then
+		if is_path "${REPO_PATH}"; then
+			SCAN_NAME="${REPO_PATH}"
 		else
-			error "repository empty"
+			local _scan_name
+			_scan_name="${target#*.*/}"
+			SCAN_NAME="${_scan_name%.git}"
+		fi
+		REPO_LIST="${target}"
+
+	# Check if path is a GitHub repo
+	elif is_path "${target}"; then
+		path_to_uri "${target}"
+		if repo_exist_not_empty "${REPO_URI}"; then
+			SCAN_NAME="${target}"
+			REPO_LIST="${REPO_URI}"
+		else
+			echo_error "repository empty"
 		fi
 
 	# Otherwise
 	# Check if it is a GitHub Org/User
-	elif gh_owner_exist "$target"; then
-		if gh_owner_has_repo "$target"; then
-			SCAN_NAME="$target"
-			get_gh_owner_repo_list "$target"
-			if [ -z "$REPO_LIST" ] && [ $INCLUDE_FORK = 'false' ]; then
-				error 'owner has no accessible repository matching criterias'
+	elif gh_owner_exist "${target}"; then
+		if gh_owner_has_repo "${target}"; then
+			SCAN_NAME="${target}"
+			get_gh_owner_repo_list "${target}"
+			if [ -z "${REPO_LIST}" ] && [ ${INCLUDE_FORK} = 'false' ]; then
+				echo_error 'owner has no accessible repository matching criterias'
 			fi
 		else
-			error 'owner has no accessible repository'
+			echo_error 'owner has no accessible repository'
 		fi
 	fi
 
-	if [ -z "$REPO_LIST" ]; then
-		error "target not found or empty: $target"
+	if [ -z "${REPO_LIST}" ]; then
+		echo_error "target not found or empty: ${target}"
 	fi
 }
 
 # Usage: parse_input_file FILE
-# Output: $REPO_LIST
+# Output: ${REPO_LIST}
 parse_input_file() {
-	local input_file file_repo_list
+	local input_file line file_repo_list
 	input_file="$1"
+	readonly input_file
 
-	if [ -f "$input_file" ]; then
+	if [ -f "${input_file}" ]; then
 		while read -r line; do
 			if [ -n "$line" ]; then
-				target_to_repo_list "$line"
-				file_repo_list+="$REPO_LIST"
+				target_to_repo_list "${line}"
+				file_repo_list+="${REPO_LIST}"
 			fi
-		done <<< "$(cat "$input_file")"
-		SCAN_NAME="$(basename "$input_file")"
+		done <<<"$(cat "${input_file}")"
+		SCAN_NAME="$(basename "${input_file}")"
 	else
-		error "file not found: $input_file"
+		echo_error "file not found: ${input_file}"
 	fi
 
-	REPO_LIST="$file_repo_list"
+	REPO_LIST="${file_repo_list}"
 }
 
 clean() {
 	echo -e "\n[${GREEN}i${NO_COLOR}] - Cleaning up..."
-	if [ $KEEP_DOWNLOADS = 'false' ]; then
+	if [ ${KEEP_DOWNLOADS} = 'false' ]; then
 		rm -rf "${TEMP_DIR:?}\n"
 	fi
 }
@@ -168,63 +227,112 @@ on_error() {
 	exit $result
 }
 
+# Usage: repo_exist_not_empty <repo_url>
 repo_exist_not_empty() {
 	git ls-remote --quiet --exit-code "$1" >/dev/null 2>&1
 	return $?
 }
 
+# Usage: uri_to_path <repo_uri>
+# Output: $REPO_PATH
+uri_to_path() {
+	local repo_url
+	repo_url="$1"
+	REPO_PATH=$(awk '
+	{
+		if (match($0, /([^:/]+:\/\/)?([^@]+@)?([^:/]+)[:/](.+\/[^/.]+)(\.git)?$/, arr)) {
+			print arr[4]
+		}
+	}' <<<"$repo_url")
+}
+
+# Usage: path_to_uri <repo_path>
+# Output: $REPO_URI
+path_to_uri() {
+	local repo_path
+	repo_path="$1"
+	REPO_URI="https://${GH_TOKEN:+${GH_TOKEN}@}${GH_HOST}/${repo_path}"
+}
+
+# Usage: is_path <repo_path>
+is_path() {
+	local repo_path
+	repo_path="$1"
+	[[ "$repo_path" =~ ^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$ ]]
+}
+
+# Usage: gh_owner_exist <url>
 gh_owner_exist() {
-	gh api "users/$1" --silent >/dev/null 2>&1
-	return $?
-}
-
-gh_owner_has_repo(){
-	if [ "$(gh api "users/$1" --jq '.public_repos' 2> /dev/null)" -gt 0 ]; then
-		return 0
+	if [ "$USE_GH_CLI" = 'true' ]; then
+		gh api "users/$1" --silent >/dev/null 2>&1
+		return $?
 	else
-		return 1
+		http_code="$(curl --silent --max-time 30 --fail --head --output /dev/null --write-out "%{http_code}\n" "https://api.github.com/users/$1")"
+		[ "$http_code" = '200' ]
 	fi
 }
 
+# Usage: gh_owner_has_repo <owner>
+gh_owner_has_repo() {
+	local public_repos
+	public_repos=0
+
+	if [ "$USE_GH_CLI" = 'true' ]; then
+		public_repos="$(gh api "users/$1" --jq '.public_repos' 2>/dev/null)"
+	else
+		public_repos="$(curl --silent --max-time 30 "https://api.github.com/users/$1" | awk --field-separator ':' '/public_repos/ {gsub(/[^0-9]/,"", $2); print $2}')"
+	fi
+	[ "$public_repos" -gt 0 ]
+}
+
+# Usage: is_gh_fork <repo_path>
 is_gh_fork() {
-	if [ "$(gh repo view "$1" --json isFork --jq '.isFork' 2> /dev/null)" = 'true' ]; then
-		return 0
+	local is_fork
+
+	if [ "$USE_GH_CLI" = 'true' ]; then
+		is_fork="$(gh repo view "$1" --json isFork --jq '.isFork' 2>/dev/null)"
 	else
-		return 1
+		is_fork="$(curl --silent --max-time 30 "https://api.github.com/repos/$1" | awk --field-separator ':' '/"fork"/ {gsub(/[^a-zA-Z]/,"", $2); print $2; exit}')"
 	fi
+	[ "$is_fork" = 'true' ]
 }
 
-# Usage: get_email DIR
-# Output: $authors
+# Usage: get_authors_csv <input_dir>
+# Output: $AUTHORS
 get_authors_csv() {
-	authors='\n'
-    while read -r line && [ -n "$line" ]; do
-        authors+="$line\n"
-    done <<< "$(git -C "$1" log --format='%ae,"%an"' --all --quiet)"
-    authors="$(echo -e "$authors")"
+	AUTHORS='\n'
+	while read -r line && [ -n "$line" ]; do
+		AUTHORS+="$line\n"
+	done <<<"$(git -C "$1" log --format='%ae,"%an"' --all --quiet)"
+	AUTHORS="$(echo -e "$AUTHORS")"
 }
 
-# Usage: clone REPO_URL DESTINATION_DIR
+# Usage: clone <repo_url> <output_dir>
 clone() {
-	local ret_error
+	local repo_url output_dir ret_error
+	repo_url="$1"
+	output_dir="$2"
 	ret_error=1
 
-	if [ -d "$2" ]; then
+	if [ -d "$output_dir" ]; then
+
+		# Handle local .git(s) update
 		if [ $UPDATE = 'true' ]; then
 			echo -n ' Updating...'
-			if git -C "$2" pull --quiet >/dev/null 2>&1; then
+			if git -C "$output_dir" pull --quiet >/dev/null 2>&1; then
 				ret_error=0
 			else
 				echo -n ' Failed. Downloading...'
 
 				# Attempt to clone the repo in a temp dir
-				if repo_exist_not_empty "$1"; then
-					if git clone --no-checkout --quiet "$1" "_$2" >/dev/null 2>&1; then
-						rm -rf "${2:?}" && \
-						mv -f "_$2" "$2" && \
-						ret_error=0
+				if repo_exist_not_empty "$repo_url"; then
+					if git clone --no-checkout --quiet "$repo_url" "_$output_dir" >/dev/null 2>&1; then
+						rm -rf "${2:?}" &&
+							mv -f "_$output_dir" "$output_dir" &&
+							ret_error=0
 					else
-						error "repository out of reach: $1"
+						echo
+						echo_error "repository out of reach: $repo_url"
 					fi
 				else
 					ret_error=0
@@ -236,11 +344,12 @@ clone() {
 		fi
 	else
 		echo -n ' Downloading...'
-		if repo_exist_not_empty "$1"; then
-			if git clone --no-checkout --quiet "$1" "$2" >/dev/null 2>&1; then
+		if repo_exist_not_empty "$repo_url"; then
+			if git clone --no-checkout --quiet "$repo_url" "$output_dir" >/dev/null 2>&1; then
 				ret_error=0
 			else
-				error "repository out of reach: $1"
+				echo
+				echo_error "repository out of reach: $repo_url"
 			fi
 		else
 			ret_error=0
@@ -251,16 +360,16 @@ clone() {
 	return $ret_error
 }
 
-# Usage: scan_repo_list REPO_ARRAY
-# Output: $total_authors
+# Usage: scan_repo_list <repo_array>
+# Output: $TOTAL_AUTHORS
 scan_repo_list() {
-	local len_repo_list counter clone_dir
-	read -r total_authors repo <<< ''
-	len_repo_list="$(wc -w <<< "$1" | tr -d ' ')"
+	local repo len_repo_list counter clone_dir
+	read -r TOTAL_AUTHORS repo <<<''
+	len_repo_list="$(wc -w <<<"${1}" | tr -d ' ')"
 	counter=1
-	authors=''
-	for url in $1; do
-		if [ "$url" = '*/.git' ]; then
+
+	for url in ${1}; do
+		if [ "${url}" = '*/.git' ]; then
 			repo="$(basename "${url%%/.git}")"
 		else
 			repo="$(basename "${url%%.git}")"
@@ -271,113 +380,197 @@ scan_repo_list() {
 		# If no download then no temp dir is required
 		if [ "${url%://*}" = 'file' ]; then
 			clone_dir="${url#*://}"
-			[ $UPDATE = 'true' ] && clone "$url" "${clone_dir%.git}"
+			[ $UPDATE = 'true' ] && clone "${url}" "${clone_dir%.git}"
 		else
 			clone_dir="${TEMP_DIR}/${repo}"
-			clone "$url" "$clone_dir"
+			clone "${url}" "${clone_dir}"
 		fi
 
-		if [ -d "$clone_dir" ]; then
+		if [ -d "${clone_dir}" ]; then
 			echo -n ' Parsing...'
-			get_authors_csv "$clone_dir"
+			get_authors_csv "${clone_dir}"
 		fi
 
-		total_authors+="$authors"
+		TOTAL_AUTHORS+="${AUTHORS:-}"
 		counter=$((counter + 1))
 
 		echo -ne " ${GREEN}Done${NO_COLOR}"
 	done
 }
 
-# Usage: output_results AUTHORS
+# Usage: output_results <authors_array>
 output_results() {
-	local author_count
-	author_count="$(wc -l <<< "$1")"
+	local authors author_count
+	authors="$1"
+	author_count="$(sed "/^ *$/d" <<<"${authors}" | wc -l)"
 
 	if [ "$author_count" -le '0' ]; then
 		echo -e "\n[${GREEN}i${NO_COLOR}] - No email matching criterias found."
 	else
 		if [ -n "$OUTPUT_FILE" ]; then
-			echo -e "email,names\n$1" | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[mGK]//g" > "${OUTPUT_FILE:?}"
+			echo -e "email,names\n${authors}" | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[mGK]//g" >"${OUTPUT_FILE:?}"
 			echo -e "\n[${GREEN}i${NO_COLOR}] - Results saved to ${BOLD_WHITE}${OUTPUT_FILE}${NO_COLOR}"
 		else
-			echo -e "\n\n${1}"
+			echo -e "\n\n${authors}"
 		fi
 	fi
 }
 
-# Usage: get_repo_list_local DIR
+# Usage: get_repo_list_local <input_dir>
 # Output: $REPO_LIST
 get_repo_list_local() {
-	local local_git_list git_path_absolute
+	local input_dir local_git_list git_path_absolute
+	input_dir="$1"
 
 	# Add all .git(s) to list
-	local_git_list="$(find "$1" -maxdepth 3 -type f -name 'description' ! -size 0)"
-	if [ -n "$local_git_list" ]; then
+	local_git_list="$(find "${input_dir}" -maxdepth 3 -type f -name 'description' ! -size 0)"
+	if [ -n "${local_git_list}" ]; then
 		while read -r git_path; do
 			git_path_absolute="$(realpath "${git_path%%/description}")"
-			if repo_exist_not_empty "$git_path_absolute"; then
+			if repo_exist_not_empty "${git_path_absolute}"; then
 				REPO_LIST+="file://${git_path_absolute} "
 			else
-				error "directory is not a Git repository: $(basename "$git_path_absolute")"
+				echo_error "directory is not a Git repository: $(basename "${git_path_absolute}")"
 			fi
-		done <<< "$local_git_list"
+		done <<<"${local_git_list}"
 	else
-		error 'empty directory'
+		echo_error 'empty directory'
 	fi
 }
 
-# Usage: get_gh_owner_repo_list OWNER
+# Usage: get_gh_owner_repo_list <owner>
 # Output: $REPO_LIST
 get_gh_owner_repo_list() {
-	local owner_type repo_url
+	local owner owner_type owner_api_type repo_url response repo_list
+	owner="$1"
 
-	if [ "$(gh api "users/$1" --jq '.type' 2> /dev/null)" = 'Organization' ]; then
-		owner_type='orgs'
+	if [ "${USE_GH_CLI}" = 'true' ]; then
+		owner_type="$(gh api "users/${owner}" --cache 5m --jq '.type' 2>/dev/null)"
 	else
-		owner_type='users'
+		owner_type="$(curl --silent --max-time 30 "https://api.github.com/users/${owner}" | awk --field-separator ':' '/"type"/ {gsub(/[^a-zA-Z]/,"", $2); print $2}')"
 	fi
 
-	while read -r repo_url && [ -n "$repo_url" ]; do
-		REPO_LIST+="$repo_url "
-	done <<< "$(gh api "$owner_type/$1/repos" --paginate --jq ".[] | select(.fork == false or $INCLUDE_FORK) | select(.private == false or $INCLUDE_PRIVATE) | .clone_url")"
+	if [ "${owner_type}" = 'Organization' ]; then
+		owner_api_type='orgs'
+	elif [ "${owner_type}" = 'User' ]; then
+		owner_api_type='users'
+	else
+		echo_error "owner type unsupported: ${owner}"
+	fi
+
+	if [ "${USE_GH_CLI}" = 'true' ]; then
+		repo_list="$(gh api "${owner_api_type}/${owner}/repos" --paginate --cache 5m --jq ".[] | select(.fork == ${INCLUDE_FORK}) | select(.private == ${INCLUDE_PRIVATE}) | .clone_url")"
+	else
+		response=$(curl --silent --max-time 30 "https://api.github.com/${owner_api_type}/${owner}/repos")
+		repo_list=$(awk --assign include_fork="${INCLUDE_FORK}" '
+		BEGIN { RS = ""; FS = "\n"; }
+		{
+			fork_value = "";
+			clone_url = "";
+			for (i = 1; i <= NF; i++) {
+				if ($i ~ /"fork":/) {
+					fork_value = $i;
+					gsub(/.*"fork": /, "", fork_value);
+					gsub(/,/, "", fork_value);
+					fork_value = gensub(/^[ \t]+|[ \t]+$/, "", "g", fork_value);  # Trim whitespace
+				}
+				if ($i ~ /"clone_url":/) {
+					clone_url = $i;
+					gsub(/.*"clone_url": "/, "", clone_url);
+					gsub(/",/, "", clone_url);
+					clone_url = gensub(/^[ \t]+|[ \t]+$/, "", "g", clone_url);  # Trim whitespace
+				}
+			}
+			if ((include_fork == "true" || fork_value == "false") && clone_url != "") {
+				print clone_url;
+			}
+		}' <<<"${response}")
+	fi
+
+	while read -r repo_url && [ -n "${repo_url}" ]; do
+		REPO_LIST+="${repo_url} "
+	done <<<"${repo_list}"
 }
 
-# Usage: filter AUTHORS
-# Output: $authors
+# Usage: filter <authors_array>
+# Output: $FILTERED_LIST
 filter() {
-	local FILTERS
-	filtered_list=''
+	local authors filters
+	authors="$1"
+	FILTERED_LIST=''
 
-	if [ $USE_FILTERS = 'true' ]; then
+	if [ "${USE_FILTERS}" = 'true' ]; then
 		# Remove protected and bot emails
-		FILTERS="'^$' -e @users.noreply.github.com -e actions@github.com${USER_FILTERS}"
+		filters="'^$' -e @users.noreply.github.com -e actions@github.com${USER_FILTERS}"
 	else
 		# Remove empty lines
-		FILTERS="'^$'${USER_FILTERS}"
+		filters="'^$'${USER_FILTERS}"
 	fi
 
 	# Sort unique lines
-	filtered_list="$(sort --unique --ignore-case <<< "$1")"
+	FILTERED_LIST="$(sort --unique --ignore-case <<<"${authors}")"
 
 	# Remove names
-	if [ $INCLUDE_NAME != 'true' ]; then
-		filtered_list="$(awk -F, '{print $1}' <<< "$filtered_list")"
-	fi
+	#if [ "${INCLUDE_NAME}" != 'true' ]; then
+	#	FILTERED_LIST="$(awk --field-separator ',' '{print $1}' <<<"${FILTERED_LIST}")"
+	#fi
 
-	# Apply filters
-	filtered_list="$(grep -Fve $FILTERS <<< "$filtered_list")"
+	## Apply filters
+	FILTERED_LIST="$(grep -Fve ${filters} <<<"${FILTERED_LIST}")"
 
-	# Add "(fork)" to authors from forked repos
-	if INCLUDE_FORK=true && is_gh_fork "$TARGET/$repo"; then
-		authors="$(awk '{print "('"$YELLOW"'fork'"$NO_COLOR"')",$0}' <<< "$authors")"
-	fi
+	#FILTERED_LIST="$(
+	#	awk -v yellow="${YELLOW}" -v no_color="${NO_COLOR}" '
+	#	BEGIN { FS = ","; OFS = "," }
+	#	/^[ \t]*$/ { next }  # Skip lines that are empty or contain only spaces
+	#	NF > 1 {
+	#		if ($1 == "") $1 = "(" yellow "No Email" no_color ")";
+	#		if ($2 == "") $2 = "(" yellow "No Name" no_color ")";
+	#		a[$1] = a[$1]""$2" ";
+	#	}
+	#	END {
+	#		for (i in a) {
+	#			if (a[i] != "") {
+	#				print i, a[i];
+	#			}
+	#		}
+	#	}
+	#	' <<<"${FILTERED_LIST}"
+	#)"
 
-	# Concatenate authors with the same email address
-	filtered_list="$(awk -F, 'NF>1{if ($1 == "") $1 = "('"$YELLOW"'No Email'"$NO_COLOR"')"; if ($2 == "") $2 = "('"$YELLOW"'No Name'"$NO_COLOR"')"; a[$1]=a[$1]""$2" "} END {for(i in a) print i","a[i]}' <<< "$filtered_list")"
-
-	# Sort unique lines
-	filtered_list="$(sort --unique --ignore-case <<< "$filtered_list")"
+	# Process the FILTERED_LIST with awk
+	FILTERED_LIST="$(
+		awk -v yellow="${YELLOW}" -v no_color="${NO_COLOR}" -v include_name="${INCLUDE_NAME}" '
+    BEGIN {
+        FS = ","; OFS = ","  # Set the input and output field separators to comma
+    }
+    /^[ \t]*$/ { 
+        next  # Skip lines that are empty or contain only spaces
+    }
+    NF > 1 {
+        # If the first field (email) is empty, set it to a placeholder with yellow color
+        if ($1 == "") $1 = "(" yellow "No Email" no_color ")";
+        
+        # If INCLUDE_NAME is not true, only store the email
+        if (include_name != "true") {
+            a[$1] = "";  # Store email only
+        } else {
+            # If the second field (name) is empty, set it to a placeholder with yellow color
+            if ($2 == "") $2 = "(" yellow "No Name" no_color ")";
+            a[$1] = a[$1]""$2" ";  # Store email and name
+        }
+    }
+    END {
+        # Print the processed list
+        for (i in a) {
+            if (include_name != "true") {
+                print i;  # Print email only
+            } else {
+                print i, a[i];  # Print email and associated names
+            }
+        }
+    }
+    ' <<<"${FILTERED_LIST}"
+	)"
 }
 
 # Parse arguments
@@ -385,26 +578,26 @@ REPO_LIST=''
 parse_args "$@"
 
 # Handle download dir
-if [ $KEEP_DOWNLOADS = 'true' ]; then
-	if [ -n "$INPUT_FILE" ]; then
+if [ "${KEEP_DOWNLOADS}" = 'true' ]; then
+	if [ -n "${INPUT_FILE}" ]; then
 		TEMP_DIR="${INPUT_FILE%.*}"
 	else
-		TEMP_DIR="$SCAN_NAME"
+		TEMP_DIR="${SCAN_NAME}"
 	fi
-	echo -e "\n[${GREEN}i${NO_COLOR}] - Keeping downloaded .git in ${BOLD_WHITE}./${TEMP_DIR}/${NO_COLOR}\n"
+	echo -e "\n[${GREEN}i${NO_COLOR}] - Keeping downloaded .git in ${BOLD_WHITE}${TEMP_DIR}/${NO_COLOR}\n"
 else
 	TEMP_DIR="$(mktemp -d -q)"
 fi
-[ ! -d "$TEMP_DIR" ] && mkdir -p "${TEMP_DIR:?}"
-
+[ ! -d "${TEMP_DIR}" ] && mkdir -p "${TEMP_DIR:?}"
 echo -e '---------------------------------------\n'
 echo -e "Starting scan of ${BOLD_WHITE}${SCAN_NAME}${NO_COLOR}"
 echo -e '\n---------------------------------------'
 
 # Handle errors and exit
+#trap on_error EXIT ERR
 trap on_error ERR INT
 
-scan_repo_list "$REPO_LIST"
-filter "$total_authors"
-output_results "$filtered_list"
+scan_repo_list "${REPO_LIST}"
+filter "${TOTAL_AUTHORS}"
+output_results "${FILTERED_LIST}"
 clean
