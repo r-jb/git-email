@@ -537,7 +537,7 @@ filter() {
 	FILTERED_LIST="$(sort --unique --ignore-case <<<"${authors}")"
 
 	# Apply user filters
-	FILTERED_LIST="$(grep -Fve ${filters} <<<"${FILTERED_LIST}")"
+	FILTERED_LIST="$(grep --fixed-strings --invert-match --regexp=${filters} <<<"${FILTERED_LIST}")"
 
 	# Filter names
 	FILTERED_LIST="$(
