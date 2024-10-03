@@ -64,9 +64,9 @@ parse_args() {
 			INPUT_FILE="${2}"
 			shift
 			;;
-		--filter=*) USER_FILTERS+=" -e ${1#*=}" ;;
+		--filter=*) [ -n "${1#*=}" ] && USER_FILTERS+=" -e ${1#*=}" ;;
 		--filter | -f)
-			USER_FILTERS+=" -e ${2}"
+			[ -n "${2}" ] && USER_FILTERS+=" -e ${2}"
 			shift
 			;;
 		--raw | -r) USE_FILTERS='false' ;;
