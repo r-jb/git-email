@@ -26,7 +26,7 @@ usage() {
 	echo -e '\t-h, --help\t\tPrint this help page'
 	echo -e '\t-o, --output=FILE\tOutput as a CSV file'
 	echo -e '\t-i, --input=FILE\tFile to read the list of targets from'
-	echo -e '\t-f,--filter=FILTER\tFilter out emails containing this filter'
+	echo -e '\t-f, --filter=FILTER\tFilter out emails containing this filter'
 	echo -e '\t-r, --raw\t\tNo filter no banner'
 	echo -e '\t--fork\t\t\tInclude forked repos in the scan'
 	echo -e '\t--no-name\t\tExclude authors'\''s name'
@@ -265,7 +265,7 @@ check_http_code() {
 	http_code="${1}"
 
 	if [ "${http_code}" = '403' ]; then
-		echo_error 'GitHub API rate limit exceeded'
+		echo_error 'GitHub API rate limit exceeded, wait or use the gh cli'
 	elif [ "${http_code}" != '200' ]; then
 		echo_error "unknown GitHub error: ${http_code}"
 	else

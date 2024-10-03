@@ -26,14 +26,6 @@ Extract and compile email addresses from GitHub users, organizations, and Git re
 
 </details>
 
-<details><summary>Using an alias</summary>
-
-```bash
-  alias gh-email="$(curl -fsSL https://raw.githubusercontent.com/r-jb/github-email-extractor/main/gh-email.sh | sh)"
-```
-
-</details>
-
 ## Requirements
 
 - bash 4+
@@ -42,8 +34,5 @@ Extract and compile email addresses from GitHub users, organizations, and Git re
 - curl
 - (Optional) [gh cli](https://cli.github.com/) authenticated
 
-## Notes
-
-- Why use GitHub CLI instead of requesting GitHub's API directly ?
-
-[Currently](https://docs.github.com/en/rest/overview/resources-in-the-rest-api#rate-limits), GitHub's API only allows for 60 unauthenticated requests per hour, which may not be sufficient for most use cases.
+> [!NOTE]
+> By default, the script use accesses GitHub's API unauthenticated, which is limited to 60 requests per hour. Use the [gh CLI](https://cli.github.com/) to authenticate and increase this limit.
