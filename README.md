@@ -30,8 +30,8 @@ Extract and compile email addresses from GitHub users, organizations, and Git re
 
 - bash 4+
 - git
-- awk or gawk, not mawk
 - curl
+- awk or gawk, not mawk
 - (Optional) [gh cli](https://cli.github.com/) authenticated
 
 > [!NOTE]

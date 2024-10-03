@@ -22,7 +22,8 @@ set -o nounset  # abort on unbound variable
 set -o pipefail # don't hide errors within pipes
 
 usage() {
-	echo -e "\nUsage: ${0} (option) [repo url|local repo|GitHub Org/User]"
+	echo -e "\nUsage: ${0} [OPTIONS] [repo url|local repo|GitHub Org/User]"
+	echo -e '\nOptions:'
 	echo -e '\t-h, --help\t\tPrint this help page'
 	echo -e '\t-o, --output=FILE\tOutput as a CSV file'
 	echo -e '\t-i, --input=FILE\tFile to read the list of targets from'
