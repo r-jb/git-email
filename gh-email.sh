@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Default values
-GH_HOST_TIMEOUT=100
+GH_TIMEOUT=10
 USE_FILTERS='true'
 INCLUDE_NAME='true'
 INCLUDE_FORK='false'
@@ -22,11 +22,12 @@ set -o nounset  # abort on unbound variable
 set -o pipefail # don't hide errors within pipes
 
 usage() {
-	echo -e "\nUsage: ${0} (option) [repo url|local repo|GitHub Org/User]"
+	echo -e "\nUsage: ${0} [OPTIONS] [repo url|local repo|GitHub Org/User]"
+	echo -e '\nOptions:'
 	echo -e '\t-h, --help\t\tPrint this help page'
-	echo -e '\t-o, --output=FILE\tFile to save the output into'
+	echo -e '\t-o, --output=FILE\tOutput as a CSV file'
 	echo -e '\t-i, --input=FILE\tFile to read the list of targets from'
-	echo -e '\t-f,--filter=FILTER\tFilter out emails containing this filter'
+	echo -e '\t-f, --filter=FILTER\tFilter out emails containing this filter'
 	echo -e '\t-r, --raw\t\tNo filter no banner'
 	echo -e '\t--fork\t\t\tInclude forked repos in the scan'
 	echo -e '\t--no-name\t\tExclude authors'\''s name'
@@ -63,9 +64,9 @@ parse_args() {
 			INPUT_FILE="${2}"
 			shift
 			;;
-		--filter=*) USER_FILTERS+=" -e ${1#*=}" ;;
+		--filter=*) [ -n "${1#*=}" ] && USER_FILTERS+=" -e ${1#*=}" ;;
 		--filter | -f)
-			USER_FILTERS+=" -e ${2}"
+			[ -n "${2}" ] && USER_FILTERS+=" -e ${2}"
 			shift
 			;;
 		--raw | -r) USE_FILTERS='false' ;;
@@ -120,10 +121,10 @@ check_requirements() {
 	if ! command -v git >/dev/null 2>/dev/null; then
 		echo_error 'Requirements: git not found'
 	elif command -v gh >/dev/null 2>/dev/null; then
-		if timeout "${GH_HOST_TIMEOUT}" gh auth status >/dev/null 2>/dev/null; then
+		if timeout "${GH_TIMEOUT}" gh auth status >/dev/null 2>/dev/null; then
 			USE_GH_CLI='true'
 		else
-			echo_info 'GH CLI not authenticated, API rate limit may apply'
+			echo_info 'GH CLI is not authenticated, API rate limit may apply'
 		fi
 	fi
 
@@ -135,7 +136,7 @@ check_requirements() {
 # Usage: target_to_repo_list TARGET
 # Output: ${REPO_LIST}
 target_to_repo_list() {
-	local target
+	local target _scan_name
 	target="${1}"
 
 	uri_to_path "${target}"
@@ -155,7 +156,6 @@ target_to_repo_list() {
 		if is_path "${REPO_PATH}"; then
 			SCAN_NAME="${REPO_PATH}"
 		else
-			local _scan_name
 			_scan_name="${target#*.*/}"
 			SCAN_NAME="${_scan_name%.git}"
 		fi
@@ -195,18 +195,17 @@ target_to_repo_list() {
 parse_input_file() {
 	local input_file line file_repo_list
 	input_file="${1}"
-	readonly input_file
 
-	if [ -f "${input_file}" ]; then
+	if [ -s "${input_file}" ]; then
 		while read -r line; do
 			if [ -n "${line}" ]; then
 				target_to_repo_list "${line}"
 				file_repo_list+="${REPO_LIST}"
 			fi
-		done <<<"$(cat "${input_file}")"
-		SCAN_NAME="$(basename "${input_file}")"
+		done < <(sed -e 's:#.*$::g' -e '/^[[:space:]]*$/d' "${input_file}")
+		SCAN_NAME=''
 	else
-		echo_error "file not found: ${input_file}"
+		echo_error "file not found or empty: ${input_file}"
 	fi
 
 	REPO_LIST="${file_repo_list}"
@@ -220,27 +219,30 @@ clean() {
 }
 
 on_error() {
-	result=$?
+	local result=$?
 	clean
-	exit ${result}
+	exit "${result}"
 }
 
 # Usage: repo_exist_not_empty <repo_url>
 repo_exist_not_empty() {
-	git ls-remote --quiet --exit-code "${1}" >/dev/null 2>&1
+	local repo_url
+	repo_url="${1}"
+	git ls-remote --quiet --exit-code --heads "${repo_url}" >/dev/null 2>&1
 }
 
 # Usage: uri_to_path <repo_uri>
 # Output: $REPO_PATH
 uri_to_path() {
-	local repo_url
-	repo_url="${1}"
-	REPO_PATH=$(awk '
-	{
-		if (match($0, /([^:/]+:\/\/)?([^@]+@)?([^:/]+)[:/](.+\/[^/.]+)(\.git)?$/, arr)) {
-			print arr[4]
-		}
-	}' <<<"${repo_url}")
+	local repo_uri
+	repo_uri="${1}"
+	REPO_PATH="$(awk '{
+		gsub(/\/+$/, "", $0); sub(/[?#].*$/, "", $0); sub(/.*@/, "", $0); sub(/.*:/, "", $0)
+		match($0, /[^\/]+\/[^\/]+(\.git)?$/)
+		repo = substr($0, RSTART, RLENGTH)
+		sub(/\.git$/, "", repo)
+		print repo
+	}' <<<"${repo_uri}")"
 }
 
 # Usage: path_to_uri <repo_path>
@@ -258,38 +260,57 @@ is_path() {
 	[[ "${repo_path}" =~ ^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$ ]]
 }
 
-# Usage: gh_owner_exist <url>
-gh_owner_exist() {
-	if [ "${USE_GH_CLI}" = 'true' ]; then
-		timeout "${GH_HOST_TIMEOUT}" gh api "users/${1}" --silent >/dev/null 2>&1
-		return $?
+# Usage: check_http_code <http_code>
+check_http_code() {
+	local http_code
+	http_code="${1}"
+
+	if [ "${http_code}" = '403' ]; then
+		echo_error 'GitHub API rate limit exceeded, wait or use the gh cli'
+	elif [ "${http_code}" != '200' ]; then
+		echo_error "unknown GitHub error: ${http_code}"
 	else
-		http_code="$(curl --silent --max-time "${GH_HOST_TIMEOUT}" --fail --head --output /dev/null --write-out "%{http_code}\n" "https://api.${GH_HOST}/users/${1}")"
-		[ "${http_code}" = '200' ]
+		return 0
+	fi
+}
+
+# Usage: gh_owner_exist <owner>
+gh_owner_exist() {
+	local owner http_code
+	owner="${1}"
+
+	if [ "${USE_GH_CLI}" = 'true' ]; then
+		timeout "${GH_TIMEOUT}" gh api "users/${owner}" --silent >/dev/null 2>&1
+	else
+		http_code="$(curl --silent --max-time "${GH_TIMEOUT}" --fail --head --output /dev/null --write-out "%{http_code}\n" "https://api.${GH_HOST}/users/${owner}" 2>/dev/null)"
+		check_http_code "${http_code}"
 	fi
 }
 
 # Usage: gh_owner_has_repo <owner>
 gh_owner_has_repo() {
-	local public_repos
+	local owner public_repos
+	owner="${1}"
 	public_repos=0
 
 	if [ "${USE_GH_CLI}" = 'true' ]; then
-		public_repos="$(timeout "${GH_HOST_TIMEOUT}" gh api "users/${1}" --jq '.public_repos' 2>/dev/null)"
+		public_repos="$(timeout "${GH_TIMEOUT}" gh api "users/${owner}" --jq '.public_repos' 2>/dev/null)"
 	else
-		public_repos="$(curl --silent --max-time "${GH_HOST_TIMEOUT}" "https://api.${GH_HOST}/users/${1}" | awk --field-separator ':' '/public_repos/ {gsub(/[^0-9]/,"", $2); print $2}')"
+		public_repos="$(curl --silent --max-time "${GH_TIMEOUT}" "https://api.${GH_HOST}/users/${owner}" | awk -F: '/public_repos/ {gsub(/[^0-9]/,"", $2); print $2}' 2>/dev/null)"
 	fi
 	[ "${public_repos}" -gt 0 ]
 }
 
 # Usage: is_gh_fork <repo_path>
 is_gh_fork() {
-	local is_fork
+	local repo_path is_fork
+	repo_path="${1}"
+	is_fork='false'
 
 	if [ "${USE_GH_CLI}" = 'true' ]; then
-		is_fork="$(timeout "${GH_HOST_TIMEOUT}" gh repo view "${1}" --json isFork --jq '.isFork' 2>/dev/null)"
+		is_fork="$(timeout "${GH_TIMEOUT}" gh repo view "${repo_path}" --json isFork --jq '.isFork' 2>/dev/null)"
 	else
-		is_fork="$(curl --silent --max-time "${GH_HOST_TIMEOUT}" "https://api.${GH_HOST}/repos/${1}" | awk --field-separator ':' '/"fork"/ {gsub(/[^a-zA-Z]/,"", $2); print $2; exit}')"
+		is_fork="$(curl --silent --max-time "${GH_TIMEOUT}" "https://api.${GH_HOST}/repos/${repo_path}" 2>/dev/null | awk -F: '/"fork"/ {gsub(/[^a-zA-Z]/,"", $2); print $2; exit}')"
 	fi
 	[ "${is_fork}" = 'true' ]
 }
@@ -297,10 +318,13 @@ is_gh_fork() {
 # Usage: get_authors_csv <input_dir>
 # Output: $AUTHORS
 get_authors_csv() {
+	local input_dir line
+	input_dir="${1}"
 	AUTHORS='\n'
+
 	while read -r line && [ -n "${line}" ]; do
 		AUTHORS+="${line}\n"
-	done <<<"$(git -C "${1}" log --format='%ae,"%an"' --all --quiet)"
+	done <<<"$(git -C "${input_dir}" log --format='%ae,"%an"' --all --quiet)"
 	AUTHORS="$(echo -e "${AUTHORS}")"
 }
 
@@ -354,13 +378,13 @@ clone() {
 		fi
 	fi
 
-	return ${ret_error}
+	return "${ret_error}"
 }
 
 # Usage: scan_repo_list <repo_array>
 # Output: $TOTAL_AUTHORS
 scan_repo_list() {
-	local repo len_repo_list counter clone_dir
+	local len_repo_list repo counter clone_dir
 	read -r TOTAL_AUTHORS repo <<<''
 	len_repo_list="$(wc -w <<<"${1}" | tr -d ' ')"
 	counter=1
@@ -397,15 +421,20 @@ scan_repo_list() {
 
 # Usage: output_results <authors_array>
 output_results() {
-	local authors author_count
+	local authors author_count header
 	authors="${1}"
-	author_count="$(sed "/^ *$/d" <<<"${authors}" | wc --lines)"
+	author_count="$(sed "/^ *$/d" <<<"${authors}" | wc -l)"
 
-	if [ "$author_count" -le '0' ]; then
+	if [ "${author_count}" -le 0 ]; then
 		echo -e "\n[${GREEN}i${NO_COLOR}] - No email matching criterias found."
 	else
-		if [ -n "$OUTPUT_FILE" ]; then
-			echo -e "email,names\n${authors}" | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[mGK]//g" >"${OUTPUT_FILE:?}"
+		if [ -n "${OUTPUT_FILE}" ]; then
+			if [ "${INCLUDE_NAME}" = true ]; then
+				header='email,names'
+			else
+				header='email'
+			fi
+			echo -e "${header}\n${authors}" | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[mGK]//g" >"${OUTPUT_FILE:?}"
 			echo -e "\n[${GREEN}i${NO_COLOR}] - Results saved to ${BOLD_WHITE}${OUTPUT_FILE}${NO_COLOR}"
 		else
 			echo -e "\n\n${authors}"
@@ -416,7 +445,7 @@ output_results() {
 # Usage: get_repo_list_local <input_dir>
 # Output: $REPO_LIST
 get_repo_list_local() {
-	local input_dir local_git_list git_path_absolute
+	local input_dir local_git_list git_path git_path_absolute
 	input_dir="${1}"
 
 	# Add all .git(s) to list
@@ -442,9 +471,9 @@ get_gh_owner_repo_list() {
 	owner="${1}"
 
 	if [ "${USE_GH_CLI}" = 'true' ]; then
-		owner_type="$(timeout "${GH_HOST_TIMEOUT}" gh api "users/${owner}" --jq '.type' 2>/dev/null)"
+		owner_type="$(timeout "${GH_TIMEOUT}" gh api "users/${owner}" --jq '.type' 2>/dev/null)"
 	else
-		owner_type="$(curl --silent --max-time "${GH_HOST_TIMEOUT}" "https://api.${GH_HOST}/users/${owner}" | awk --field-separator ':' '/"type"/ {gsub(/[^a-zA-Z]/,"", $2); print $2}')"
+		owner_type="$(curl --silent --max-time "${GH_TIMEOUT}" "https://api.${GH_HOST}/users/${owner}" 2>/dev/null | awk -F: '/"type"/ {gsub(/[^a-zA-Z]/,"", $2); print $2}')"
 	fi
 
 	if [ "${owner_type}" = 'Organization' ]; then
@@ -456,10 +485,10 @@ get_gh_owner_repo_list() {
 	fi
 
 	if [ "${USE_GH_CLI}" = 'true' ]; then
-		repo_list="$(timeout "${GH_HOST_TIMEOUT}" gh api "${owner_api_type}/${owner}/repos" --paginate --jq ".[] | select(.fork == ${INCLUDE_FORK}) | .clone_url")"
+		repo_list="$(timeout "${GH_TIMEOUT}" gh api "${owner_api_type}/${owner}/repos" --paginate --jq ".[] | if ${INCLUDE_FORK} then . else select(.fork==false) end | .clone_url")"
 	else
-		response=$(curl --silent --max-time "${GH_HOST_TIMEOUT}" "https://api.${GH_HOST}/${owner_api_type}/${owner}/repos")
-		repo_list=$(awk --assign include_fork="${INCLUDE_FORK}" '
+		response="$(curl --silent --max-time "${GH_TIMEOUT}" "https://api.${GH_HOST}/${owner_api_type}/${owner}/repos" 2>/dev/null)"
+		repo_list="$(awk -v include_fork="${INCLUDE_FORK}" '
 		BEGIN { RS = ""; FS = "\n"; }
 		{
 			fork_value = "";
@@ -481,7 +510,7 @@ get_gh_owner_repo_list() {
 			if ((include_fork == "true" || fork_value == "false") && clone_url != "") {
 				print clone_url;
 			}
-		}' <<<"${response}")
+		}' <<<"${response}")"
 	fi
 
 	while read -r repo_url && [ -n "${repo_url}" ]; do
@@ -507,41 +536,17 @@ filter() {
 	# Sort unique lines
 	FILTERED_LIST="$(sort --unique --ignore-case <<<"${authors}")"
 
-	# Remove names
-	#if [ "${INCLUDE_NAME}" != 'true' ]; then
-	#	FILTERED_LIST="$(awk --field-separator ',' '{print $1}' <<<"${FILTERED_LIST}")"
-	#fi
+	# Apply user filters
+	FILTERED_LIST="$(grep --fixed-strings --invert-match --regexp=${filters} <<<"${FILTERED_LIST}")"
 
-	## Apply filters
-	FILTERED_LIST="$(grep -Fve ${filters} <<<"${FILTERED_LIST}")"
-
-	#FILTERED_LIST="$(
-	#	awk -v yellow="${YELLOW}" -v no_color="${NO_COLOR}" '
-	#	BEGIN { FS = ","; OFS = "," }
-	#	/^[ \t]*$/ { next }  # Skip lines that are empty or contain only spaces
-	#	NF > 1 {
-	#		if ($1 == "") $1 = "(" yellow "No Email" no_color ")";
-	#		if ($2 == "") $2 = "(" yellow "No Name" no_color ")";
-	#		a[$1] = a[$1]""$2" ";
-	#	}
-	#	END {
-	#		for (i in a) {
-	#			if (a[i] != "") {
-	#				print i, a[i];
-	#			}
-	#		}
-	#	}
-	#	' <<<"${FILTERED_LIST}"
-	#)"
-
-	# Process the FILTERED_LIST with awk
+	# Filter names
 	FILTERED_LIST="$(
 		awk -v yellow="${YELLOW}" -v no_color="${NO_COLOR}" -v include_name="${INCLUDE_NAME}" '
     BEGIN {
-        FS = ","; OFS = ","  # Set the input and output field separators to comma
+        FS = OFS = "," # Set the input and output field separators to comma
     }
-    /^[ \t]*$/ { 
-        next  # Skip lines that are empty or contain only spaces
+    /^[ \t]*$/ {
+        next # Skip lines that are empty or contain only spaces
     }
     NF > 1 {
         # If the first field (email) is empty, set it to a placeholder with yellow color
@@ -562,7 +567,7 @@ filter() {
             if (include_name != "true") {
                 print i;  # Print email only
             } else {
-                print i, a[i];  # Print email and associated names
+                print i, a[i]; # Print email and associated names
             }
         }
     }
@@ -587,7 +592,7 @@ else
 fi
 [ ! -d "${TEMP_DIR}" ] && mkdir -p "${TEMP_DIR:?}"
 echo -e '---------------------------------------\n'
-echo -e "Starting scan of ${BOLD_WHITE}${SCAN_NAME}${NO_COLOR}"
+echo -e "Starting scan ${SCAN_NAME:+of} ${BOLD_WHITE}${SCAN_NAME}${NO_COLOR}"
 echo -e '\n---------------------------------------'
 
 # Handle errors and exit
