@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 
 # Default values
-GH_HOST_TIMEOUT=10
+GH_HOST_TIMEOUT=100
 USE_FILTERS='true'
 INCLUDE_NAME='true'
 INCLUDE_FORK='false'
-INCLUDE_PRIVATE='true'
 UPDATE='false'
 KEEP_DOWNLOADS='false'
 GH_HOST="${GH_HOST:-github.com}"
@@ -29,9 +28,8 @@ usage() {
 	echo -e '\t-i, --input=FILE\tFile to read the list of targets from'
 	echo -e '\t-f,--filter=FILTER\tFilter out emails containing this filter'
 	echo -e '\t-r, --raw\t\tNo filter no banner'
-	echo -e '\t--fork\t\tInclude forked repos in the scan'
+	echo -e '\t--fork\t\t\tInclude forked repos in the scan'
 	echo -e '\t--no-name\t\tExclude authors'\''s name'
-	echo -e '\t--no-private\tExclude private repos in the scan'
 	echo -e '\t-k, --keep\t\tKeep downloaded .git(s) after the scan'
 	echo -e '\t-u, --update\t\tUpdate existing .git(s) before the scan'
 	echo -e '\t--no-color\t\tDo not use colors\n'
@@ -73,7 +71,6 @@ parse_args() {
 		--raw | -r) USE_FILTERS='false' ;;
 		--fork) INCLUDE_FORK='true' ;;
 		--no-name) INCLUDE_NAME='false' ;;
-		--no-private) INCLUDE_PRIVATE='false' ;;
 		--keep | -k) KEEP_DOWNLOADS='true' ;;
 		--update | -u) UPDATE='true' ;;
 		--no-color) read -r GREEN RED BLUE YELLOW BOLD_WHITE NO_COLOR <<<'' ;;
@@ -139,7 +136,7 @@ check_requirements() {
 # Output: ${REPO_LIST}
 target_to_repo_list() {
 	local target
-	target="$1"
+	target="${1}"
 
 	uri_to_path "${target}"
 
@@ -171,7 +168,7 @@ target_to_repo_list() {
 			SCAN_NAME="${target}"
 			REPO_LIST="${REPO_URI}"
 		else
-			echo_error 'repository empty or non-existent'
+			echo_error 'repository empty or nonexistent'
 		fi
 
 	# Otherwise
@@ -180,7 +177,7 @@ target_to_repo_list() {
 		if gh_owner_has_repo "${target}"; then
 			SCAN_NAME="${target}"
 			get_gh_owner_repo_list "${target}"
-			if [ -z "${REPO_LIST}" ] && [ ${INCLUDE_FORK} = 'false' ]; then
+			if [ -z "${REPO_LIST}" ] && [ "${INCLUDE_FORK}" = 'false' ]; then
 				echo_error 'owner has no accessible repository matching criterias'
 			fi
 		else
@@ -197,12 +194,12 @@ target_to_repo_list() {
 # Output: ${REPO_LIST}
 parse_input_file() {
 	local input_file line file_repo_list
-	input_file="$1"
+	input_file="${1}"
 	readonly input_file
 
 	if [ -f "${input_file}" ]; then
 		while read -r line; do
-			if [ -n "$line" ]; then
+			if [ -n "${line}" ]; then
 				target_to_repo_list "${line}"
 				file_repo_list+="${REPO_LIST}"
 			fi
@@ -217,7 +214,7 @@ parse_input_file() {
 
 clean() {
 	echo -e "\n[${GREEN}i${NO_COLOR}] - Cleaning up..."
-	if [ ${KEEP_DOWNLOADS} = 'false' ]; then
+	if [ "${KEEP_DOWNLOADS}" = 'false' ]; then
 		rm -rf "${TEMP_DIR:?}\n"
 	fi
 }
@@ -225,51 +222,50 @@ clean() {
 on_error() {
 	result=$?
 	clean
-	exit $result
+	exit ${result}
 }
 
 # Usage: repo_exist_not_empty <repo_url>
 repo_exist_not_empty() {
-	git ls-remote --quiet --exit-code "$1" >/dev/null 2>&1
-	return $?
+	git ls-remote --quiet --exit-code "${1}" >/dev/null 2>&1
 }
 
 # Usage: uri_to_path <repo_uri>
 # Output: $REPO_PATH
 uri_to_path() {
 	local repo_url
-	repo_url="$1"
+	repo_url="${1}"
 	REPO_PATH=$(awk '
 	{
 		if (match($0, /([^:/]+:\/\/)?([^@]+@)?([^:/]+)[:/](.+\/[^/.]+)(\.git)?$/, arr)) {
 			print arr[4]
 		}
-	}' <<<"$repo_url")
+	}' <<<"${repo_url}")
 }
 
 # Usage: path_to_uri <repo_path>
 # Output: $REPO_URI
 path_to_uri() {
 	local repo_path
-	repo_path="$1"
+	repo_path="${1}"
 	REPO_URI="https://${GH_TOKEN:+${GH_TOKEN}@}${GH_HOST}/${repo_path}"
 }
 
 # Usage: is_path <repo_path>
 is_path() {
 	local repo_path
-	repo_path="$1"
-	[[ "$repo_path" =~ ^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$ ]]
+	repo_path="${1}"
+	[[ "${repo_path}" =~ ^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$ ]]
 }
 
 # Usage: gh_owner_exist <url>
 gh_owner_exist() {
-	if [ "$USE_GH_CLI" = 'true' ]; then
-		timeout "${GH_HOST_TIMEOUT}" gh api "users/$1" --silent >/dev/null 2>&1
+	if [ "${USE_GH_CLI}" = 'true' ]; then
+		timeout "${GH_HOST_TIMEOUT}" gh api "users/${1}" --silent >/dev/null 2>&1
 		return $?
 	else
-		http_code="$(curl --silent --max-time "${GH_HOST_TIMEOUT}" --fail --head --output /dev/null --write-out "%{http_code}\n" "https://api.${GH_HOST}/users/$1")"
-		[ "$http_code" = '200' ]
+		http_code="$(curl --silent --max-time "${GH_HOST_TIMEOUT}" --fail --head --output /dev/null --write-out "%{http_code}\n" "https://api.${GH_HOST}/users/${1}")"
+		[ "${http_code}" = '200' ]
 	fi
 }
 
@@ -278,62 +274,62 @@ gh_owner_has_repo() {
 	local public_repos
 	public_repos=0
 
-	if [ "$USE_GH_CLI" = 'true' ]; then
-		public_repos="$(timeout "${GH_HOST_TIMEOUT}" gh api "users/$1" --jq '.public_repos' 2>/dev/null)"
+	if [ "${USE_GH_CLI}" = 'true' ]; then
+		public_repos="$(timeout "${GH_HOST_TIMEOUT}" gh api "users/${1}" --jq '.public_repos' 2>/dev/null)"
 	else
-		public_repos="$(curl --silent --max-time "${GH_HOST_TIMEOUT}" "https://api.${GH_HOST}/users/$1" | awk --field-separator ':' '/public_repos/ {gsub(/[^0-9]/,"", $2); print $2}')"
+		public_repos="$(curl --silent --max-time "${GH_HOST_TIMEOUT}" "https://api.${GH_HOST}/users/${1}" | awk --field-separator ':' '/public_repos/ {gsub(/[^0-9]/,"", $2); print $2}')"
 	fi
-	[ "$public_repos" -gt 0 ]
+	[ "${public_repos}" -gt 0 ]
 }
 
 # Usage: is_gh_fork <repo_path>
 is_gh_fork() {
 	local is_fork
 
-	if [ "$USE_GH_CLI" = 'true' ]; then
-		is_fork="$(timeout "${GH_HOST_TIMEOUT}" gh repo view "$1" --json isFork --jq '.isFork' 2>/dev/null)"
+	if [ "${USE_GH_CLI}" = 'true' ]; then
+		is_fork="$(timeout "${GH_HOST_TIMEOUT}" gh repo view "${1}" --json isFork --jq '.isFork' 2>/dev/null)"
 	else
-		is_fork="$(curl --silent --max-time "${GH_HOST_TIMEOUT}" "https://api.${GH_HOST}/repos/$1" | awk --field-separator ':' '/"fork"/ {gsub(/[^a-zA-Z]/,"", $2); print $2; exit}')"
+		is_fork="$(curl --silent --max-time "${GH_HOST_TIMEOUT}" "https://api.${GH_HOST}/repos/${1}" | awk --field-separator ':' '/"fork"/ {gsub(/[^a-zA-Z]/,"", $2); print $2; exit}')"
 	fi
-	[ "$is_fork" = 'true' ]
+	[ "${is_fork}" = 'true' ]
 }
 
 # Usage: get_authors_csv <input_dir>
 # Output: $AUTHORS
 get_authors_csv() {
 	AUTHORS='\n'
-	while read -r line && [ -n "$line" ]; do
-		AUTHORS+="$line\n"
-	done <<<"$(git -C "$1" log --format='%ae,"%an"' --all --quiet)"
-	AUTHORS="$(echo -e "$AUTHORS")"
+	while read -r line && [ -n "${line}" ]; do
+		AUTHORS+="${line}\n"
+	done <<<"$(git -C "${1}" log --format='%ae,"%an"' --all --quiet)"
+	AUTHORS="$(echo -e "${AUTHORS}")"
 }
 
 # Usage: clone <repo_url> <output_dir>
 clone() {
 	local repo_url output_dir ret_error
-	repo_url="$1"
-	output_dir="$2"
+	repo_url="${1}"
+	output_dir="${2}"
 	ret_error=1
 
-	if [ -d "$output_dir" ]; then
+	if [ -d "${output_dir}" ]; then
 
 		# Handle local .git(s) update
-		if [ $UPDATE = 'true' ]; then
+		if [ "${UPDATE}" = 'true' ]; then
 			echo -n ' Updating...'
-			if git -C "$output_dir" pull --quiet >/dev/null 2>&1; then
+			if git -C "${output_dir}" pull --quiet >/dev/null 2>&1; then
 				ret_error=0
 			else
 				echo -n ' Failed. Downloading...'
 
 				# Attempt to clone the repo in a temp dir
-				if repo_exist_not_empty "$repo_url"; then
-					if git clone --no-checkout --quiet "$repo_url" "_$output_dir" >/dev/null 2>&1; then
+				if repo_exist_not_empty "${repo_url}"; then
+					if git clone --no-checkout --quiet "${repo_url}" "_${output_dir}" >/dev/null 2>&1; then
 						rm -rf "${2:?}" &&
-							mv -f "_$output_dir" "$output_dir" &&
+							mv -f "_${output_dir}" "${output_dir}" &&
 							ret_error=0
 					else
 						echo
-						echo_error "repository out of reach: $repo_url"
+						echo_error "repository out of reach: ${repo_url}"
 					fi
 				else
 					ret_error=0
@@ -345,12 +341,12 @@ clone() {
 		fi
 	else
 		echo -n ' Downloading...'
-		if repo_exist_not_empty "$repo_url"; then
-			if git clone --no-checkout --quiet "$repo_url" "$output_dir" >/dev/null 2>&1; then
+		if repo_exist_not_empty "${repo_url}"; then
+			if git clone --no-checkout --quiet "${repo_url}" "${output_dir}" >/dev/null 2>&1; then
 				ret_error=0
 			else
 				echo
-				echo_error "repository out of reach: $repo_url"
+				echo_error "repository out of reach: ${repo_url}"
 			fi
 		else
 			ret_error=0
@@ -358,7 +354,7 @@ clone() {
 		fi
 	fi
 
-	return $ret_error
+	return ${ret_error}
 }
 
 # Usage: scan_repo_list <repo_array>
@@ -381,7 +377,7 @@ scan_repo_list() {
 		# If no download then no temp dir is required
 		if [ "${url%://*}" = 'file' ]; then
 			clone_dir="${url#*://}"
-			[ $UPDATE = 'true' ] && clone "${url}" "${clone_dir%.git}"
+			[ "${UPDATE}" = 'true' ] && clone "${url}" "${clone_dir%.git}"
 		else
 			clone_dir="${TEMP_DIR}/${repo}"
 			clone "${url}" "${clone_dir}"
@@ -402,8 +398,8 @@ scan_repo_list() {
 # Usage: output_results <authors_array>
 output_results() {
 	local authors author_count
-	authors="$1"
-	author_count="$(sed "/^ *$/d" <<<"${authors}" | wc -l)"
+	authors="${1}"
+	author_count="$(sed "/^ *$/d" <<<"${authors}" | wc --lines)"
 
 	if [ "$author_count" -le '0' ]; then
 		echo -e "\n[${GREEN}i${NO_COLOR}] - No email matching criterias found."
@@ -421,7 +417,7 @@ output_results() {
 # Output: $REPO_LIST
 get_repo_list_local() {
 	local input_dir local_git_list git_path_absolute
-	input_dir="$1"
+	input_dir="${1}"
 
 	# Add all .git(s) to list
 	local_git_list="$(find "${input_dir}" -maxdepth 3 -type f -name 'description' ! -size 0)"
@@ -443,7 +439,7 @@ get_repo_list_local() {
 # Output: $REPO_LIST
 get_gh_owner_repo_list() {
 	local owner owner_type owner_api_type repo_url response repo_list
-	owner="$1"
+	owner="${1}"
 
 	if [ "${USE_GH_CLI}" = 'true' ]; then
 		owner_type="$(timeout "${GH_HOST_TIMEOUT}" gh api "users/${owner}" --jq '.type' 2>/dev/null)"
@@ -460,7 +456,7 @@ get_gh_owner_repo_list() {
 	fi
 
 	if [ "${USE_GH_CLI}" = 'true' ]; then
-		repo_list="$(timeout "${GH_HOST_TIMEOUT}" gh api "${owner_api_type}/${owner}/repos" --paginate --jq ".[] | select(.fork == ${INCLUDE_FORK}) | select(.private == ${INCLUDE_PRIVATE}) | .clone_url")"
+		repo_list="$(timeout "${GH_HOST_TIMEOUT}" gh api "${owner_api_type}/${owner}/repos" --paginate --jq ".[] | select(.fork == ${INCLUDE_FORK}) | .clone_url")"
 	else
 		response=$(curl --silent --max-time "${GH_HOST_TIMEOUT}" "https://api.${GH_HOST}/${owner_api_type}/${owner}/repos")
 		repo_list=$(awk --assign include_fork="${INCLUDE_FORK}" '
@@ -497,7 +493,7 @@ get_gh_owner_repo_list() {
 # Output: $FILTERED_LIST
 filter() {
 	local authors filters
-	authors="$1"
+	authors="${1}"
 	FILTERED_LIST=''
 
 	if [ "${USE_FILTERS}" = 'true' ]; then
@@ -585,7 +581,7 @@ if [ "${KEEP_DOWNLOADS}" = 'true' ]; then
 	else
 		TEMP_DIR="${SCAN_NAME}"
 	fi
-	echo -e "\n[${GREEN}i${NO_COLOR}] - Keeping downloaded .git in ${BOLD_WHITE}${TEMP_DIR}/${NO_COLOR}\n"
+	echo -e "\n[${GREEN}i${NO_COLOR}] - Keeping downloaded .git in ${BOLD_WHITE}${TEMP_DIR}${NO_COLOR}\n"
 else
 	TEMP_DIR="$(mktemp -d -q)"
 fi
