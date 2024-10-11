@@ -121,7 +121,7 @@ check_requirements() {
 	if ! command -v git >/dev/null 2>/dev/null; then
 		echo_error 'Requirements: git not found'
 	elif command -v gh >/dev/null 2>/dev/null; then
-		if timeout "${GH_TIMEOUT}" gh auth status >/dev/null 2>/dev/null; then
+		if timeout "${GH_TIMEOUT}" gh auth status --hostname 'github.com' >/dev/null 2>/dev/null; then
 			USE_GH_CLI='true'
 		else
 			echo_info 'GH CLI is not authenticated, API rate limit may apply'
