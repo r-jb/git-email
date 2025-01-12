@@ -17,9 +17,9 @@ YELLOW='\033[0;33m'
 BOLD_WHITE='\033[1;37m'
 NO_COLOR='\033[0m'
 
-set -o errexit  # abort on nonzero exitstatus
-set -o nounset  # abort on unbound variable
-set -o pipefail # don't hide errors within pipes
+#set -o errexit  # abort on nonzero exitstatus
+#set -o nounset  # abort on unbound variable
+#set -o pipefail # don't hide errors within pipes
 
 usage() {
 	echo -e "\nUsage: ${0} [OPTIONS] [repo url|local repo|GitHub Org/User]"
@@ -42,8 +42,6 @@ echo_info() {
 
 echo_error() {
 	echo -e "[${RED}-${NO_COLOR}] - ${RED}Error: ${*}${NO_COLOR}"
-	usage
-	exit 1
 }
 
 parse_args() {
@@ -75,10 +73,16 @@ parse_args() {
 		--keep | -k) KEEP_DOWNLOADS='true' ;;
 		--update | -u) UPDATE='true' ;;
 		--no-color) read -r GREEN RED BLUE YELLOW BOLD_WHITE NO_COLOR <<<'' ;;
-		--*) echo_error "unknown argument: ${1}" ;;
+		--*)
+			echo_error "unknown argument: ${1}"
+			usage
+			exit 1
+			;;
 		*)
 			if [ -n "${TARGET}" ]; then
 				echo_error 'use input file to scan multiple targets'
+				usage
+				exit 1
 			else
 				TARGET="${1}"
 			fi
@@ -105,7 +109,9 @@ parse_args() {
 				SCAN_NAME="${scan_name}, ${SCAN_NAME}"
 			fi
 		else
-			target_to_repo_list "${TARGET}"
+			if ! target_to_repo_list "${TARGET}"; then
+				exit 1
+			fi
 		fi
 	elif [ -n "${INPUT_FILE}" ]; then
 		parse_input_file "${INPUT_FILE}"
@@ -120,6 +126,8 @@ check_requirements() {
 	USE_GH_CLI='false'
 	if ! command -v git >/dev/null 2>/dev/null; then
 		echo_error 'Requirements: git not found'
+		usage
+		exit 1
 	elif command -v gh >/dev/null 2>/dev/null; then
 		if timeout "${GH_TIMEOUT}" gh auth status --hostname 'github.com' >/dev/null 2>/dev/null; then
 			USE_GH_CLI='true'
@@ -130,14 +138,17 @@ check_requirements() {
 
 	if ! command -v curl >/dev/null 2>/dev/null; then
 		echo_error 'Requirements: curl not found'
+		usage
+		exit 1
 	fi
 }
 
 # Usage: target_to_repo_list TARGET
 # Output: ${REPO_LIST}
 target_to_repo_list() {
-	local target _scan_name
+	local target ret_error scan_name
 	target="${1}"
+	ret_error=1
 
 	uri_to_path "${target}"
 
@@ -145,21 +156,24 @@ target_to_repo_list() {
 	if [ -d "${target}" ]; then
 		SCAN_NAME="$(basename "${target}")"
 		get_repo_list_local "${target}"
+		ret_error=0
 
 	# Check if target URI is a local dir
 	elif is_path "${REPO_PATH}" && [ -d "${REPO_PATH}" ]; then
 		SCAN_NAME="${REPO_PATH}"
 		get_repo_list_local "${REPO_PATH}"
+		ret_error=0
 
 	# Check if target is a remote git repo
 	elif repo_exist_not_empty "${target}"; then
 		if is_path "${REPO_PATH}"; then
 			SCAN_NAME="${REPO_PATH}"
 		else
-			_scan_name="${target#*.*/}"
-			SCAN_NAME="${_scan_name%.git}"
+			scan_name="${target#*.*/}"
+			SCAN_NAME="${scan_name%.git}"
 		fi
 		REPO_LIST="${target}"
+		ret_error=0
 
 	# Check if path is a GitHub repo
 	elif is_path "${target}"; then
@@ -167,18 +181,20 @@ target_to_repo_list() {
 		if repo_exist_not_empty "${REPO_URI}"; then
 			SCAN_NAME="${target}"
 			REPO_LIST="${REPO_URI}"
+			ret_error=0
 		else
 			echo_error 'repository empty or nonexistent'
 		fi
 
-	# Otherwise
-	# Check if it is a GitHub Org/User
+	# Otherwise check if target is a GitHub Org/User
 	elif gh_owner_exist "${target}"; then
 		if gh_owner_has_repo "${target}"; then
 			SCAN_NAME="${target}"
 			get_gh_owner_repo_list "${target}"
 			if [ -z "${REPO_LIST}" ] && [ "${INCLUDE_FORK}" = 'false' ]; then
 				echo_error 'owner has no accessible repository matching criterias'
+			else
+				ret_error=0
 			fi
 		else
 			echo_error 'owner has no accessible repository'
@@ -187,7 +203,11 @@ target_to_repo_list() {
 
 	if [ -z "${REPO_LIST}" ]; then
 		echo_error "target not found or empty: ${target}"
+	else
+		REPO_LIST="$(uniq <<<"${REPO_LIST}")"
 	fi
+
+	return "${ret_error}"
 }
 
 # Usage: parse_input_file FILE
@@ -195,20 +215,33 @@ target_to_repo_list() {
 parse_input_file() {
 	local input_file line file_repo_list
 	input_file="${1}"
+	file_repo_list=''
 
+	repo_list="$(sed -e 's:#.*$::g' -e '/^[[:space:]]*$/d' "${input_file}")"
+	echo "DEBUG - repo_list=$repo_list"
+	echo
 	if [ -s "${input_file}" ]; then
-		while read -r line; do
+		while IFS='' read -r line; do
+			echo "DEBUG: Line: $line"
 			if [ -n "${line}" ]; then
-				target_to_repo_list "${line}"
+				target_to_repo_list "${line}" # todo: fix crash on url like: https://github.com/atiilla/
 				file_repo_list+="${REPO_LIST}"
 			fi
-		done < <(sed -e 's:#.*$::g' -e '/^[[:space:]]*$/d' "${input_file}")
+			#echo "file_repo_list: ${file_repo_list}"
+		done <<<"$repo_list"
 		SCAN_NAME=''
 	else
 		echo_error "file not found or empty: ${input_file}"
+		exit 1
 	fi
 
-	REPO_LIST="${file_repo_list}"
+	echo test2
+	echo "file_repo_list: ${file_repo_list}"
+	if [ -n "${file_repo_list}" ]; then
+		REPO_LIST="${file_repo_list}" # todo: uniq
+	else
+		exit 1
+	fi
 }
 
 clean() {
@@ -232,7 +265,7 @@ repo_exist_not_empty() {
 }
 
 # Usage: uri_to_path <repo_uri>
-# Output: $REPO_PATH
+# Output: ${REPO_PATH}
 uri_to_path() {
 	local repo_uri
 	repo_uri="${1}"
@@ -246,7 +279,7 @@ uri_to_path() {
 }
 
 # Usage: path_to_uri <repo_path>
-# Output: $REPO_URI
+# Output: ${REPO_URI}
 path_to_uri() {
 	local repo_path
 	repo_path="${1}"
@@ -267,8 +300,12 @@ check_http_code() {
 
 	if [ "${http_code}" = '403' ]; then
 		echo_error 'GitHub API rate limit exceeded, wait or use the gh cli'
+		usage
+		exit 1
 	elif [ "${http_code}" != '200' ]; then
 		echo_error "unknown GitHub error: ${http_code}"
+		usage
+		exit 1
 	else
 		return 0
 	fi
@@ -316,7 +353,7 @@ is_gh_fork() {
 }
 
 # Usage: get_authors_csv <input_dir>
-# Output: $AUTHORS
+# Output: ${AUTHORS}
 get_authors_csv() {
 	local input_dir line
 	input_dir="${1}"
@@ -352,8 +389,8 @@ clone() {
 							mv -f "_${output_dir}" "${output_dir}" &&
 							ret_error=0
 					else
-						echo
-						echo_error "repository out of reach: ${repo_url}"
+						#echo
+						echo_error "repository out of reach: ${repo_url%.git}"
 					fi
 				else
 					ret_error=0
@@ -369,8 +406,8 @@ clone() {
 			if git clone --no-checkout --quiet "${repo_url}" "${output_dir}" >/dev/null 2>&1; then
 				ret_error=0
 			else
-				echo
-				echo_error "repository out of reach: ${repo_url}"
+				#echo
+				echo_error "repository out of reach: ${repo_url%.git}"
 			fi
 		else
 			ret_error=0
@@ -382,7 +419,7 @@ clone() {
 }
 
 # Usage: scan_repo_list <repo_array>
-# Output: $TOTAL_AUTHORS
+# Output: ${TOTAL_AUTHORS}
 scan_repo_list() {
 	local len_repo_list repo counter clone_dir
 	read -r TOTAL_AUTHORS repo <<<''
@@ -401,21 +438,30 @@ scan_repo_list() {
 		# If no download then no temp dir is required
 		if [ "${url%://*}" = 'file' ]; then
 			clone_dir="${url#*://}"
-			[ "${UPDATE}" = 'true' ] && clone "${url}" "${clone_dir%.git}"
+			if [ "${UPDATE}" = 'true' ]; then
+
+				# Continue on clone fail if list is more than 1
+				if ! clone "${url}" "${clone_dir%.git}" && [ "${len_repo_list}" -eq 1 ]; then
+					exit 1
+				fi
+			fi
 		else
+
+			# Continue on clone fail if list is more than 1
 			clone_dir="${TEMP_DIR}/${repo}"
-			clone "${url}" "${clone_dir}"
+			if ! clone "${url}" "${clone_dir}" && [ "${len_repo_list}" -eq 1 ]; then
+				exit 1
+			fi
 		fi
 
 		if [ -d "${clone_dir}" ]; then
 			echo -n ' Parsing...'
 			get_authors_csv "${clone_dir}"
+			TOTAL_AUTHORS+="${AUTHORS:-}"
+			echo -ne " ${GREEN}Done${NO_COLOR}"
 		fi
 
-		TOTAL_AUTHORS+="${AUTHORS:-}"
 		counter=$((counter + 1))
-
-		echo -ne " ${GREEN}Done${NO_COLOR}"
 	done
 }
 
@@ -443,7 +489,7 @@ output_results() {
 }
 
 # Usage: get_repo_list_local <input_dir>
-# Output: $REPO_LIST
+# Output: ${REPO_LIST}
 get_repo_list_local() {
 	local input_dir local_git_list git_path git_path_absolute
 	input_dir="${1}"
@@ -457,15 +503,19 @@ get_repo_list_local() {
 				REPO_LIST+="file://${git_path_absolute} "
 			else
 				echo_error "directory is not a Git repository: $(basename "${git_path_absolute}")"
+				usage
+				exit 1
 			fi
 		done <<<"${local_git_list}"
 	else
 		echo_error 'empty directory'
+		usage
+		exit 1
 	fi
 }
 
 # Usage: get_gh_owner_repo_list <owner>
-# Output: $REPO_LIST
+# Output: ${REPO_LIST}
 get_gh_owner_repo_list() {
 	local owner owner_type owner_api_type repo_url response repo_list
 	owner="${1}"
@@ -482,6 +532,8 @@ get_gh_owner_repo_list() {
 		owner_api_type='users'
 	else
 		echo_error "owner type unsupported: ${owner}"
+		usage
+		exit 1
 	fi
 
 	if [ "${USE_GH_CLI}" = 'true' ]; then
@@ -519,7 +571,7 @@ get_gh_owner_repo_list() {
 }
 
 # Usage: filter <authors_array>
-# Output: $FILTERED_LIST
+# Output: ${FILTERED_LIST}
 filter() {
 	local authors filters
 	authors="${1}"
@@ -551,7 +603,7 @@ filter() {
     NF > 1 {
         # If the first field (email) is empty, set it to a placeholder with yellow color
         if ($1 == "") $1 = "(" yellow "No Email" no_color ")";
-        
+
         # If INCLUDE_NAME is not true, only store the email
         if (include_name != "true") {
             a[$1] = "";  # Store email only
@@ -577,7 +629,7 @@ filter() {
 
 # Parse arguments
 REPO_LIST=''
-parse_args "$@"
+parse_args "${@}"
 
 # Handle download dir
 if [ "${KEEP_DOWNLOADS}" = 'true' ]; then
