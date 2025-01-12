@@ -218,16 +218,12 @@ parse_input_file() {
 	file_repo_list=''
 
 	repo_list="$(sed -e 's:#.*$::g' -e '/^[[:space:]]*$/d' "${input_file}" | awk '!seen[$0]++')"
-	echo "DEBUG - repo_list=$repo_list"
-	echo
 	if [ -s "${input_file}" ]; then
 		while IFS='' read -r line; do
-			echo "DEBUG: Line: $line"
 			if [ -n "${line}" ]; then
 				target_to_repo_list "${line}"
 				file_repo_list+="${REPO_LIST}"$'\n'
 			fi
-			echo "file_repo_list: ${file_repo_list}"
 		done <<<"${repo_list}"
 		SCAN_NAME=''
 	else
