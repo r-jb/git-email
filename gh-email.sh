@@ -217,28 +217,27 @@ parse_input_file() {
 	input_file="${1}"
 	file_repo_list=''
 
-	repo_list="$(sed -e 's:#.*$::g' -e '/^[[:space:]]*$/d' "${input_file}")"
+	repo_list="$(sed -e 's:#.*$::g' -e '/^[[:space:]]*$/d' "${input_file}" | awk '!seen[$0]++')"
 	echo "DEBUG - repo_list=$repo_list"
 	echo
 	if [ -s "${input_file}" ]; then
 		while IFS='' read -r line; do
 			echo "DEBUG: Line: $line"
 			if [ -n "${line}" ]; then
-				target_to_repo_list "${line}" # todo: fix crash on url like: https://github.com/atiilla/
-				file_repo_list+="${REPO_LIST}"
+				target_to_repo_list "${line}"
+				file_repo_list+="${REPO_LIST}"$'\n'
 			fi
-			#echo "file_repo_list: ${file_repo_list}"
-		done <<<"$repo_list"
+			echo "file_repo_list: ${file_repo_list}"
+		done <<<"${repo_list}"
 		SCAN_NAME=''
 	else
 		echo_error "file not found or empty: ${input_file}"
 		exit 1
 	fi
 
-	echo test2
-	echo "file_repo_list: ${file_repo_list}"
+	# Set output ${REPO_LIST} and filter duplicates
 	if [ -n "${file_repo_list}" ]; then
-		REPO_LIST="${file_repo_list}" # todo: uniq
+		REPO_LIST="$(awk '!seen[$0]++' <<<"${file_repo_list}")"
 	else
 		exit 1
 	fi
@@ -589,6 +588,7 @@ filter() {
 	FILTERED_LIST="$(sort --unique --ignore-case <<<"${authors}")"
 
 	# Apply user filters
+	# shellcheck disable=SC2086,SC2090
 	FILTERED_LIST="$(grep --fixed-strings --invert-match --regexp=${filters} <<<"${FILTERED_LIST}")"
 
 	# Filter names
