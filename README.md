@@ -50,5 +50,6 @@ Tested on Git BASH for Windows systems.
 
 ## Alternatives
 
-https://github.com/giovanifss/Gitmails-sh
-https://github.com/atiilla/gitrecon
+- [emailaddress.github.io](https://emailaddress.github.io/)
+- [Gitmails-sh](https://github.com/giovanifss/Gitmails-sh)
+- [gitrecon](https://github.com/atiilla/gitrecon)
