@@ -17,9 +17,9 @@ YELLOW='\033[0;33m'
 BOLD_WHITE='\033[1;37m'
 NO_COLOR='\033[0m'
 
-#set -o errexit  # abort on nonzero exitstatus
-#set -o nounset  # abort on unbound variable
-#set -o pipefail # don't hide errors within pipes
+set -o errexit  # abort on nonzero exitstatus
+set -o nounset  # abort on unbound variable
+set -o pipefail # don't hide errors within pipes
 
 usage() {
 	echo -e "\nUsage: ${0} [OPTIONS] [repo url|local repo|GitHub Org/User]"
@@ -388,8 +388,8 @@ clone() {
 				if repo_exist_not_empty "${repo_url}"; then
 					echo -n ' Downloading...'
 					if git clone --no-checkout --quiet "${repo_url}" "_${output_dir}" >/dev/null 2>&1; then
-						rm -rf "${output_dir:?}" &&
-							mv -f "_${output_dir}" "${output_dir}" &&
+						rm -rf "${output_dir:?}" && \n
+							mv -f "_${output_dir}" "${output_dir}" && \n
 							ret_error=0
 					else
 						echo_error "repository out of reach: ${repo_url%.git}"
@@ -635,7 +635,7 @@ startup_dashes="$(printf -- '-%0.s' $(seq 1 "${startup_msg_length}"))"
 
 echo "${startup_dashes}"
 echo -e "${startup_msg}"
-echo -e "${startup_dashes}\n"
+echo -e "${startup_dashes}"
 
 # Handle download dir
 if [ "${KEEP_DOWNLOADS}" = 'true' ]; then
