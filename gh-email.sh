@@ -314,6 +314,8 @@ gh_owner_exist() {
 
 		if [ "${http_code}" = '200' ]; then
 			return 0
+		elif [ "${http_code}" = '404' ]; then
+			return 1
 		elif [ "${http_code}" = '403' ]; then
 			echo_error 'GitHub API rate limit exceeded, wait or use the gh cli'
 			exit 1
