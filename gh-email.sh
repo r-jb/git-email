@@ -54,13 +54,23 @@ parse_args() {
 			;;
 		--output=*) OUTPUT_FILE="${1#*=}" ;;
 		--output | -o)
-			OUTPUT_FILE="${2}"
-			shift
+			if [ -n "${OUTPUT_FILE}" ]; then
+				echo_error 'output file already set'
+				exit 1
+			else
+				OUTPUT_FILE="${2}"
+				shift
+			fi
 			;;
 		--input=*) INPUT_FILE="${1#*=}" ;;
 		--input | -i)
-			INPUT_FILE="${2}"
-			shift
+			if [ -n "${OUTPUT_FILE}" ]; then
+				echo_error 'input file already set'
+				exit 1
+			else
+				INPUT_FILE="${2}"
+				shift
+			fi
 			;;
 		--filter=*) [ -n "${1#*=}" ] && USER_FILTERS+=" -e ${1#*=}" ;;
 		--filter | -f)
@@ -240,7 +250,6 @@ parse_input_file() {
 }
 
 clean() {
-	echo -e "\n[${GREEN}i${NO_COLOR}] - Cleaning up..."
 	if [ "${KEEP_DOWNLOADS}" = 'false' ]; then
 		rm -rf "${TEMP_DIR:?}\n"
 	fi
@@ -288,24 +297,6 @@ is_path() {
 	[[ "${repo_path}" =~ ^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$ ]]
 }
 
-# Usage: check_http_code <http_code>
-check_http_code() {
-	local http_code
-	http_code="${1}"
-
-	if [ "${http_code}" = '403' ]; then
-		echo_error 'GitHub API rate limit exceeded, wait or use the gh cli'
-		usage
-		exit 1
-	elif [ "${http_code}" != '200' ]; then
-		echo_error "unknown GitHub error: ${http_code}"
-		usage
-		exit 1
-	else
-		return 0
-	fi
-}
-
 # Usage: gh_owner_exist <owner>
 gh_owner_exist() {
 	local owner http_code
@@ -315,7 +306,16 @@ gh_owner_exist() {
 		timeout "${GH_TIMEOUT}" gh api "users/${owner}" --silent >/dev/null 2>&1
 	else
 		http_code="$(curl --silent --max-time "${GH_TIMEOUT}" --fail --head --output /dev/null --write-out "%{http_code}\n" "https://api.${GH_HOST}/users/${owner}" 2>/dev/null)"
-		check_http_code "${http_code}"
+
+		if [ "${http_code}" = '200' ]; then
+			return 0
+		elif [ "${http_code}" = '403' ]; then
+			echo_error 'GitHub API rate limit exceeded, wait or use the gh cli'
+			exit 1
+		else
+			echo_error "unknown GitHub error: ${http_code}"
+			exit 1
+		fi
 	fi
 }
 
@@ -375,16 +375,16 @@ clone() {
 			if git -C "${output_dir}" pull --quiet >/dev/null 2>&1; then
 				ret_error=0
 			else
-				echo -n ' Failed. Downloading...'
+				echo -n ' Failed.'
 
 				# Attempt to clone the repo in a temp dir
 				if repo_exist_not_empty "${repo_url}"; then
+					echo -n ' Downloading...'
 					if git clone --no-checkout --quiet "${repo_url}" "_${output_dir}" >/dev/null 2>&1; then
-						rm -rf "${2:?}" &&
+						rm -rf "${output_dir:?}" &&
 							mv -f "_${output_dir}" "${output_dir}" &&
 							ret_error=0
 					else
-						#echo
 						echo_error "repository out of reach: ${repo_url%.git}"
 					fi
 				else
@@ -401,7 +401,6 @@ clone() {
 			if git clone --no-checkout --quiet "${repo_url}" "${output_dir}" >/dev/null 2>&1; then
 				ret_error=0
 			else
-				#echo
 				echo_error "repository out of reach: ${repo_url%.git}"
 			fi
 		else
@@ -428,7 +427,7 @@ scan_repo_list() {
 			repo="$(basename "${url%%.git}")"
 		fi
 
-		echo -ne "\n[${GREEN}${counter}/${len_repo_list}${NO_COLOR}] - ${BOLD_WHITE}${repo}${NO_COLOR}:"
+		echo -en "\n[${GREEN}${counter}/${len_repo_list}${NO_COLOR}] - ${BOLD_WHITE}${repo}${NO_COLOR}:"
 
 		# If no download then no temp dir is required
 		if [ "${url%://*}" = 'file' ]; then
@@ -453,7 +452,7 @@ scan_repo_list() {
 			echo -n ' Parsing...'
 			get_authors_csv "${clone_dir}"
 			TOTAL_AUTHORS+="${AUTHORS:-}"
-			echo -ne " ${GREEN}Done${NO_COLOR}"
+			echo -en " ${GREEN}Done${NO_COLOR}"
 		fi
 
 		counter=$((counter + 1))
@@ -469,16 +468,16 @@ output_results() {
 	if [ "${author_count}" -le 0 ]; then
 		echo -e "\n[${GREEN}i${NO_COLOR}] - No email matching criterias found."
 	else
+		echo -e "\n\n${authors}"
+
 		if [ -n "${OUTPUT_FILE}" ]; then
 			if [ "${INCLUDE_NAME}" = true ]; then
 				header='email,names'
 			else
 				header='email'
 			fi
-			echo -e "${header}\n${authors}" | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[mGK]//g" >"${OUTPUT_FILE:?}"
+			echo -e "${header}\n${authors}" >"${OUTPUT_FILE:?}"
 			echo -e "\n[${GREEN}i${NO_COLOR}] - Results saved to ${BOLD_WHITE}${OUTPUT_FILE}${NO_COLOR}"
-		else
-			echo -e "\n\n${authors}"
 		fi
 	fi
 }
@@ -577,6 +576,7 @@ filter() {
 		filters="'^$' -e @users.noreply.github.com -e actions@github.com${USER_FILTERS}"
 	else
 		# Remove empty lines
+		# shellcheck disable=SC2089
 		filters="'^$'${USER_FILTERS}"
 	fi
 
@@ -627,6 +627,14 @@ filter() {
 REPO_LIST=''
 parse_args "${@}"
 
+startup_msg="- Starting scan ${SCAN_NAME:+of} ${BOLD_WHITE}${SCAN_NAME}${NO_COLOR} -"
+startup_msg_length="$(echo -en "${startup_msg}" | sed -E "s/\x1B\[[0-9;]*m//g" | wc -c)"
+startup_dashes="$(printf -- '-%0.s' $(seq 1 "${startup_msg_length}"))"
+
+echo "${startup_dashes}"
+echo -e "${startup_msg}"
+echo -e "${startup_dashes}\n"
+
 # Handle download dir
 if [ "${KEEP_DOWNLOADS}" = 'true' ]; then
 	if [ -n "${INPUT_FILE}" ]; then
@@ -634,17 +642,13 @@ if [ "${KEEP_DOWNLOADS}" = 'true' ]; then
 	else
 		TEMP_DIR="${SCAN_NAME}"
 	fi
-	echo -e "\n[${GREEN}i${NO_COLOR}] - Keeping downloaded .git in ${BOLD_WHITE}${TEMP_DIR}${NO_COLOR}\n"
+	echo_info "Keeping downloaded .git in ${BOLD_WHITE}${TEMP_DIR}${NO_COLOR}"
 else
 	TEMP_DIR="$(mktemp -d -q)"
 fi
 [ ! -d "${TEMP_DIR}" ] && mkdir -p "${TEMP_DIR:?}"
-echo -e '---------------------------------------\n'
-echo -e "Starting scan ${SCAN_NAME:+of} ${BOLD_WHITE}${SCAN_NAME}${NO_COLOR}"
-echo -e '\n---------------------------------------'
 
 # Handle errors and exit
-#trap on_error EXIT ERR
 trap on_error ERR INT
 
 scan_repo_list "${REPO_LIST}"
