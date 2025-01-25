@@ -227,18 +227,19 @@ target_to_repo_list() {
 # Usage: parse_input_file FILE
 # Output: ${REPO_LIST}
 parse_input_file() {
-	local input_file line file_repo_list
+	local input_file initial_repo_list final_repo_list line
 	input_file="${1}"
-	file_repo_list=''
+	final_repo_list=''
 
-	repo_list="$(sed -e 's:#.*$::g' -e '/^[[:space:]]*$/d' "${input_file}" | awk '!seen[$0]++')"
+	initial_repo_list="$(sed -e 's:#.*$::g' -e '/^[[:space:]]*$/d' "${input_file}" | awk '!seen[$0]++')"
 	if [ -s "${input_file}" ]; then
 		while IFS='' read -r line; do
 			if [ -n "${line}" ]; then
 				target_to_repo_list "${line}"
-				file_repo_list+="${REPO_LIST}"$'\n'
+				#final_repo_list+="${REPO_LIST}"$'\n'
+				final_repo_list="$(echo -e "${final_repo_list}\n${REPO_LIST}")"
 			fi
-		done <<<"${repo_list}"
+		done <<<"${initial_repo_list}"
 		SCAN_NAME=''
 	else
 		echo_error "file not found or empty: ${input_file}"
@@ -246,8 +247,8 @@ parse_input_file() {
 	fi
 
 	# Set output ${REPO_LIST} and filter duplicates
-	if [ -n "${file_repo_list}" ]; then
-		REPO_LIST="$(awk '!seen[$0]++' <<<"${file_repo_list}")"
+	if [ -n "${final_repo_list}" ]; then
+		REPO_LIST="$(awk '!seen[$0]++' <<<"${final_repo_list}")"
 	else
 		exit 1
 	fi
