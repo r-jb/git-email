@@ -335,7 +335,7 @@ gh_owner_has_repo() {
 	if [ "${USE_GH_CLI}" = 'true' ]; then
 		public_repos="$(timeout "${GH_TIMEOUT}" gh api "users/${owner}" --jq '.public_repos' 2>/dev/null)"
 	else
-		public_repos="$(curl --silent --max-time "${GH_TIMEOUT}" "https://api.${GH_HOST}/users/${owner}" | awk -F: '/public_repos/ {gsub(/[^0-9]/,"", $2); print $2}' 2>/dev/null)"
+		public_repos="$(curl --silent --max-time "${GH_TIMEOUT}" "https://api.${GH_HOST}/users/${owner}" 2>/dev/null | awk -F: '/public_repos/ {gsub(/[^0-9]/,"", $2); print $2}' 2>/dev/null)"
 	fi
 	[ "${public_repos}" -gt 0 ]
 }
