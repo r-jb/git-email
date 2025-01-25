@@ -64,8 +64,11 @@ parse_args() {
 			;;
 		--input=*) INPUT_FILE="${1#*=}" ;;
 		--input | -i)
-			if [ -n "${OUTPUT_FILE}" ]; then
+			if [ -n "${INPUT}" ]; then
 				echo_error 'input file already set'
+				exit 1
+			elif [ -n "${TARGET}" ]; then
+				echo_error 'target already set'
 				exit 1
 			else
 				INPUT_FILE="${2}"
@@ -160,6 +163,7 @@ target_to_repo_list() {
 	target="${1}"
 	ret_error=1
 
+	# Get ${REPO_PATH}
 	uri_to_path "${target}"
 
 	# Check if target path is a local dir
@@ -627,7 +631,7 @@ filter() {
 REPO_LIST=''
 parse_args "${@}"
 
-startup_msg="- Starting scan ${SCAN_NAME:+of} ${BOLD_WHITE}${SCAN_NAME}${NO_COLOR} -"
+startup_msg="- Starting scan ${SCAN_NAME:+of }${BOLD_WHITE}${SCAN_NAME:-}${NO_COLOR} -"
 startup_msg_length="$(echo -en "${startup_msg}" | sed -E "s/\x1B\[[0-9;]*m//g" | wc -c)"
 startup_dashes="$(printf -- '-%0.s' $(seq 1 "${startup_msg_length}"))"
 
