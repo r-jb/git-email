@@ -541,29 +541,24 @@ get_gh_owner_repo_list() {
 		repo_list="$(timeout "${GH_TIMEOUT}" gh api "${owner_api_type}/${owner}/repos" --paginate --jq ".[] | if ${INCLUDE_FORK} then . else select(.fork==false) end | .clone_url")"
 	else
 		response="$(curl --silent --max-time "${GH_TIMEOUT}" "https://api.${GH_HOST}/${owner_api_type}/${owner}/repos" 2>/dev/null)"
-repo_list="$(awk -v include_fork="${INCLUDE_FORK}" '
-		BEGIN { RS = ""; FS = "\n"; }
-		{
-			fork_value = "";
-			clone_url = "";
-			for (i = 1; i <= NF; i++) {
-				if ($i ~ /"fork":/) {
-					fork_value = $i;
-					gsub(/.*"fork": /, "", fork_value);
-					gsub(/,/, "", fork_value);
-					gsub(/^[ \t]+|[ \t]+$/, "", fork_value);  # Trim whitespace
+		repo_list="$(awk -v include_fork="${INCLUDE_FORK}" '
+			BEGIN { RS = ""; FS = "\n"; }
+			{
+				fork_value = clone_url = "";
+				for (i = 1; i <= NF; i++) {
+					if ($i ~ /"fork":/) {
+						gsub(/.*"fork": |,/, "", $i);
+						fork_value = $i;
+					}
+					if ($i ~ /"clone_url":/) {
+						gsub(/.*"clone_url": "|",/, "", $i);
+						clone_url = $i;
+					}
 				}
-				if ($i ~ /"clone_url":/) {
-					clone_url = $i;
-					gsub(/.*"clone_url": "/, "", clone_url);
-					gsub(/",/, "", clone_url);
-					gsub(/^[ \t]+|[ \t]+$/, "", clone_url);  # Trim whitespace
+				if ((include_fork == "true" || fork_value == "false") && clone_url != "") {
+					print clone_url;
 				}
-			}
-			if ((include_fork == "true" || fork_value == "false") && clone_url != "") {
-				print clone_url;
-			}
-		}' <<<"${response}")"
+			}' <<<"${response}")"
 	fi
 
 	while read -r repo_url && [ -n "${repo_url}" ]; do
