@@ -64,7 +64,7 @@ parse_args() {
 			;;
 		--input=*) INPUT_FILE="${1#*=}" ;;
 		--input | -i)
-			if [ -n "${INPUT}" ]; then
+			if [ -n "${INPUT_FILE}" ]; then
 				echo_error 'input file already set'
 				exit 1
 			elif [ -n "${TARGET}" ]; then
